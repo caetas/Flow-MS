@@ -1,0 +1,494 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from einops import rearrange
+from torch import einsum
+import math
+from functools import partial
+from torchvision.utils import make_grid
+import matplotlib.pyplot as plt
+from tqdm import tqdm, trange
+import wandb
+
+def exists(x):
+    return x is not None
+
+def default(val, d):
+    if exists(val):
+        return val
+    return d() if callable(d) else d
+
+class Attention(nn.Module):
+    def __init__(self, num_channels, num_heads=4, head_dim=32):
+        '''
+        Attention module
+        :param num_channels: number of channels in the input image
+        :param num_heads: number of heads in the multi-head attention
+        :param head_dim: dimension of each head
+        '''
+        super().__init__()
+        self.scale = head_dim**-0.5
+        self.num_heads = num_heads
+        hidden_dim = head_dim * num_heads
+        self.to_qkv = nn.Conv2d(in_channels=num_channels, out_channels=hidden_dim * 3, kernel_size=1, bias=False)
+        self.to_out = nn.Conv2d(in_channels=hidden_dim, out_channels=num_channels, kernel_size=1)
+        
+    def forward(self, x):
+        '''
+        Forward pass of the attention module
+        :param x: input image
+        '''
+        b, c, h, w = x.shape
+        qkv = self.to_qkv(x).chunk(3, dim=1)
+        q, k, v = map(
+            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.num_heads), qkv
+        )
+        q = q * self.scale
+
+        sim = einsum("b h d i, b h d j -> b h i j", q, k)
+        sim = sim - sim.amax(dim=-1, keepdim=True).detach()
+        attn = sim.softmax(dim=-1)
+
+        out = einsum("b h i j, b h d j -> b h i d", attn, v)
+        out = rearrange(out, "b h (x y) d -> b (h d) x y", x=h, y=w)
+        return self.to_out(out)
+
+class Block(nn.Module):
+    def __init__(self, in_channels, out_channels, groups=8):
+        '''
+        Block module
+        :param in_channels: number of input channels
+        :param out_channels: number of output channels
+        :param groups: number of groups for group normalization
+        '''
+        super().__init__()
+        self.projection = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, padding=1)
+        self.group_norm = nn.GroupNorm(num_gruops=groups, num_channels=out_channels)
+        self.activation = nn.SiLU()
+
+    def forward(self, x, scale_shift=None):
+        '''
+        Forward pass of the block module
+        :param x: input image
+        :param scale_shift: scale and shift values
+        '''
+        x = self.projection(x)
+        x = self.group_norm(x)
+
+        if exists(scale_shift):
+            scale, shift = scale_shift
+            x = x * (scale + 1) + shift
+
+        x = self.activation(x)
+        return x
+
+class ConvNextBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, *, time_embedding_dim=None, channel_scale_factor=2, normalize=True):
+        '''
+        ConvNextBlock module
+        :param in_channels: number of input channels
+        :param out_channels: number of output channels
+        :param time_embedding_dim: dimension of the time embedding
+        :param channel_scale_factor: scaling factor for the number of channels
+        :param normalize: whether to normalize the output
+        '''
+        super().__init__()
+        self.time_projection = (
+            nn.Sequential(
+                nn.GELU(), 
+                nn.Linear(in_features=time_embedding_dim, out_features=in_channels)
+            )
+            if exists(x=time_embedding_dim)
+            else None
+        )
+
+        self.ds_conv = nn.Sequential(nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=7, padding=3, groups=in_channels))
+
+        self.net = nn.Sequential(
+            nn.GroupNorm(num_groups=1, num_channels=in_channels) if normalize else nn.Identity(),
+            nn.Conv2d(in_channels=in_channels, out_channels=out_channels * channel_scale_factor, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.GroupNorm(num_groups=1, num_channels=out_channels * channel_scale_factor), 
+            nn.Conv2d(in_channels=out_channels * channel_scale_factor, out_channels=out_channels, kernel_size=3, padding=1),
+        )
+
+        self.residual_connection = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+
+    def forward(self, x, time_emb=None):
+        '''
+        Forward pass of the ConvNextBlock module
+        :param x: input image
+        :param time_emb: time embedding
+        '''
+        h = self.ds_conv(x)
+        if exists(x=self.time_projection) and exists(x=time_emb):
+            assert exists(x=time_emb), "time embedding must be passed in"
+            condition = self.time_projection(time_emb)
+            h = h + rearrange(condition, "b c -> b c 1 1")
+        
+
+        h = self.net(h)
+        return h + self.residual_connection(x)
+    
+class Downsample(nn.Module):
+    def __init__(self, num_channels):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels=num_channels, out_channels=num_channels, kernel_size=4, stride=2, padding=1)
+
+    def forward(self, x):
+        return self.conv(x)
+    
+class LinearAttention(nn.Module):
+    def __init__(self, num_channels, num_heads=4, head_dim=32):
+        '''
+        LinearAttention module
+        :param num_channels: number of channels in the input image
+        :param num_heads: number of heads in the multi-head attention
+        :param head_dim: dimension of each head
+        '''
+        super().__init__()
+        self.scale = head_dim**-0.5
+        self.num_heads = num_heads
+        hidden_dim = head_dim * num_heads
+        self.to_qkv = nn.Conv2d(in_channels=num_channels, out_channels=hidden_dim * 3, kernel_size=1, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Conv2d(in_channels=hidden_dim, out_channels=num_channels, kernel_size=1), 
+            nn.GroupNorm(num_groups=1, num_channels=num_channels)
+        )
+
+    def forward(self, x):
+        '''
+        Forward pass of the linear attention module
+        :param x: input image
+        '''
+        b, c, h, w = x.shape
+        qkv = self.to_qkv(x).chunk(3, dim=1)
+        q, k, v = map(
+            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.num_heads), qkv
+        )
+
+        q = q.softmax(dim=-2)
+        k = k.softmax(dim=-1)
+
+        q = q * self.scale
+        context = einsum("b h d n, b h e n -> b h d e", k, v)
+
+        out = einsum("b h d e, b h d n -> b h e n", context, q)
+        out = rearrange(out, "b h c (x y) -> b (h c) x y", h=self.num_heads, x=h, y=w)
+        return self.to_out(out)
+
+class SinusoidalPositionEmbeddings(nn.Module):
+    def __init__(self, dim):
+        '''
+        SinusoidalPositionEmbeddings module
+        :param dim: dimension of the sinusoidal position embeddings
+        '''
+        super().__init__()
+        self.dim = dim
+        self.half_dim = dim // 2
+        self.partial_embeddings = math.log(10000) / (self.half_dim - 1)
+        
+    
+    def forward(self, time):
+        device = time.device 
+        embeddings = torch.exp(torch.arange(self.half_dim, device=device) * -self.partial_embeddings)
+        embeddings = time[:, None] * embeddings[None, :]
+        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
+        return embeddings
+
+class PreNorm(nn.Module):
+    def __init__(self, num_channels, fn):
+        super().__init__()
+        self.fn = fn
+        self.group_norm = nn.GroupNorm(num_groups=1, num_channels=num_channels)
+
+    def forward(self, x):
+        x = self.group_norm(x)
+        return self.fn(x)
+
+class Residual(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x, *args, **kwargs):
+        return self.fn(x, *args, **kwargs) + x
+
+class ResNetBlock(nn.Module): 
+    def __init__(self, in_channels, out_channels, *, time_embedding_dim=None, groups=8):
+        '''
+        ResNetBlock module
+        :param in_channels: number of input channels
+        :param out_channels: number of output channels
+        :param time_embedding_dim: dimension of the time embedding
+        :param groups: number of groups for group normalization
+        '''
+        super().__init__()
+        self.time_projection = (
+            nn.Sequential(
+                nn.SiLU(), 
+                nn.Linear(in_features=time_embedding_dim, out_features=out_channels) 
+            )
+            if exists(x=time_embedding_dim)
+            else None
+        )
+
+        self.block1 = Block(in_channels=in_channels, out_channels=out_channels, groups=groups)
+        self.block2 = Block(in_channels=out_channels, out_channels=out_channels, groups=groups)
+        self.residual_connection = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+
+    def forward(self, x, time_emb=None):
+        h = self.block1(x)
+
+        if exists(x=self.time_projection) and exists(x=time_emb):
+            assert exists(x=time_emb), "time embedding must be passed in"
+            time_emb = self.mlp(time_emb)
+            h = rearrange(time_emb, "b c -> b c 1 1") + h
+
+        h = self.block2(h)
+        return h + self.residual_connection(x)
+    
+class Upsample(nn.Module):
+    def __init__(self, num_channels):
+        super().__init__()
+        self.conv = nn.ConvTranspose2d(in_channels=num_channels, out_channels=num_channels, kernel_size=4, stride=2, padding=1)
+
+    def forward(self, x):
+        return self.conv(x)
+
+class UNet(nn.Module):
+    def __init__(self, n_features, init_channels=None, out_channels=None, channel_scale_factors=(1, 2, 4, 8), in_channels=3, with_time_emb=True, resnet_block_groups=8, use_convnext=True, convnext_scale_factor=2):
+        '''
+        UNet module
+        :param n_features: number of features
+        :param init_channels: number of initial channels
+        :param out_channels: number of output channels
+        :param channel_scale_factors: scaling factors for the number of channels
+        :param in_channels: number of input channels
+        :param with_time_emb: whether to use time embeddings
+        :param resnet_block_groups: number of groups for group normalization in the ResNet block
+        :param use_convnext: whether to use ConvNext block
+        :param convnext_scale_factor: scaling factor for the number of channels in the ConvNext block
+        '''
+        super().__init__()
+
+        # determine dimensions
+        self.in_channels = in_channels
+
+        init_channels = default(init_channels, n_features // 3 * 2)
+        self.init_conv = nn.Conv2d(in_channels=in_channels, out_channels=init_channels, kernel_size=7, padding=3)
+
+        dims = [init_channels, *map(lambda m: n_features * m, channel_scale_factors)]
+        resolution_translations = list(zip(dims[:-1], dims[1:]))
+        
+        if use_convnext:
+            block_klass = partial(ConvNextBlock, channel_scale_factor=convnext_scale_factor)
+        else:
+            block_klass = partial(ResNetBlock, groups=resnet_block_groups)
+
+        # time embeddings
+        if with_time_emb:
+            time_dim = n_features * 4
+            self.time_projection = nn.Sequential(
+                SinusoidalPositionEmbeddings(dim=n_features),
+                nn.Linear(in_features=n_features, out_features=time_dim),
+                nn.GELU(),
+                nn.Linear(in_features=time_dim, out_features=time_dim),
+            )
+        else:
+            time_dim = None
+            self.time_projection = None
+
+        # layers
+        self.encoder = nn.ModuleList([])
+        self.decoder = nn.ModuleList([])
+        num_resolutions = len(resolution_translations)
+
+        for idx, (in_chan, out_chan) in enumerate(resolution_translations):
+            is_last = idx >= (num_resolutions - 1)
+            self.encoder.append(
+                nn.ModuleList(
+                    [
+                        block_klass(in_channels=in_chan, out_channels=out_chan, time_embedding_dim=time_dim),
+                        block_klass(in_channels=out_chan, out_channels=out_chan, time_embedding_dim=time_dim),
+                        Residual(fn=PreNorm(num_channels=out_chan, fn=LinearAttention(num_channels=out_chan))),
+                        Downsample(num_channels=out_chan) if not is_last else nn.Identity(),
+                    ]
+                )
+            )
+
+        bottleneck_capacity = dims[-1]
+        self.mid_block1 = block_klass(bottleneck_capacity, bottleneck_capacity, time_embedding_dim=time_dim)
+        self.mid_attn = Residual(PreNorm(bottleneck_capacity, Attention(bottleneck_capacity)))
+        self.mid_block2 = block_klass(bottleneck_capacity, bottleneck_capacity, time_embedding_dim=time_dim)
+
+        
+
+        for idx, (in_chan, out_chan) in enumerate(reversed(resolution_translations[1:])):
+            is_last = idx >= (num_resolutions - 1)
+
+            self.decoder.append(
+                nn.ModuleList(
+                    [
+                        block_klass(in_channels=out_chan * 2, out_channels=in_chan, time_embedding_dim=time_dim),
+                        block_klass(in_channels=in_chan, out_channels=in_chan, time_embedding_dim=time_dim),
+                        Residual(fn=PreNorm(num_channels=in_chan, fn=LinearAttention(num_channels=in_chan))),
+                        Upsample(num_channels=in_chan) if not is_last else nn.Identity(),
+                    ]
+                )
+            )
+
+        out_chan = default(out_channels, in_channels)
+        self.final_conv = nn.Sequential(
+            block_klass(in_channels=n_features, out_channels=n_features), 
+            nn.Conv2d(in_channels=n_features, out_channels=out_chan, kernel_size=1)
+        )
+
+    def forward(self, x, time):
+        x = self.init_conv(x)
+
+        t = self.time_projection(time) if exists(self.time_projection) else None
+
+        noisy_latent_representation_stack = []
+
+        # downsample
+        for block1, block2, attn, downsample in self.encoder:
+            x = block1(x, time_emb=t)
+            x = block2(x, time_emb=t)
+            x = attn(x)
+            noisy_latent_representation_stack.append(x)
+            x = downsample(x)
+        
+        # bottleneck
+        x = self.mid_block1(x, time_emb=t)
+        x = self.mid_attn(x)
+        x = self.mid_block2(x, time_emb=t)
+
+        # upsample
+        for block1, block2, attn, upsample in self.decoder:
+            x = torch.cat((x, noisy_latent_representation_stack.pop()), dim=1)
+            x = block1(x, time_emb=t)
+            x = block2(x, time_emb=t)
+            x = attn(x)
+            x = upsample(x)
+        
+        return self.final_conv(x)
+
+def reparametrize(noise, mu, sigma):
+    return noise * sigma + mu
+
+class FlowMS(nn.Module):
+
+    def __init__(self, args, channels=3):
+        '''
+        FlowMS model
+        :param args: arguments
+        '''
+        super(FlowMS, self).__init__()
+        self.args = args
+        self.channels = channels
+        self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.unet.to(self.device)
+
+    def forward(self, x, time):
+        '''
+        Forward pass of the FlowMS model
+        :param x: input image
+        :param time: time embedding
+        '''
+        return self.unet(x, time)
+    
+    def conditional_flow_matching_loss(self, x, mask):
+        sigma_min = 1e-4
+        t = torch.rand(x.shape[0], device=x.device)
+        noise = torch.randn_like(x)
+        noise = (mask>0.).float() * reparametrize(noise, 1.5, 0.5) + (mask<=0.).float() * reparametrize(noise, -1.5, 0.5)
+
+        x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
+        optimal_flow = x - (1 - sigma_min) * noise
+        predicted_flow = self.unet(x_t, t)
+
+        return (predicted_flow - optimal_flow).square().mean()
+    
+    @torch.no_grad()
+    def sample_from_mask(self, mask, n_steps, train=True):
+        noise = torch.randn_like(mask)
+        noise = (mask>0.).float() * reparametrize(noise, 1.5, 0.5) + (mask<=0.).float() * reparametrize(noise, -1.5, 0.5)
+        x_t = noise
+        t = 0.
+        for i in range(n_steps):
+            x_t = self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
+            t += 1./n_steps
+        
+        x_t = (x_t + 1.) / 2.
+        x_t = torch.clamp(x_t, 0., 1.)
+        fig = plt.figure(figsize=(10, 10))
+        grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
+        plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
+        if train:
+            wandb.log({"samples": fig})
+        else:
+            plt.show()
+        plt.close(fig)
+    
+    @torch.no_grad()
+    def segment_image(self, x, n_steps, train=True):
+        '''
+        Segment the image
+        :param x: input image
+        '''
+        
+        x_t = x
+        t=1.
+        for i in range(n_steps):
+            x_t = -self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
+            t -= 1./n_steps
+        
+        x_t = (x_t + 1.) / 2.
+        x_t = torch.clamp(x_t, 0., 1.)
+        x_t[x_t > 0.5] = 1.
+        x_t[x_t <= 0.5] = 0.
+
+        fig = plt.figure(figsize=(10, 10))
+        grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
+        plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
+        if train:
+            wandb.log({"segmentation": fig})
+        else:
+            plt.show()
+        plt.close(fig)
+        
+
+    def train_model(self, dataloader, testloader=None):
+        '''
+        Train the FlowMS model
+        :param dataloader: dataloader for the dataset
+        '''
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
+        epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
+        
+        for epoch in epoch_bar:
+            epoch_loss = 0.
+            for x, mask in tqdm(dataloader, desc='Batches', leave=False):
+                x = x.to(self.device)
+                mask = mask.to(self.device)
+                optimizer.zero_grad()
+                loss = self.conditional_flow_matching_loss(x, mask)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()*x.shape[0]
+            epoch_loss /= len(dataloader.dataset)
+            epoch_bar.set_postfix(loss=epoch_loss)
+            wandb.log({"loss": epoch_loss})
+
+            if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
+                x, mask = next(iter(testloader))
+                mask = mask.to(self.device)
+                self.sample_from_mask(mask, self.args.n_steps)
+                x = x.to(self.device)
+                self.segment_image(x, self.args.n_steps)
+        
+
+                

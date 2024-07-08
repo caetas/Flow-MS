@@ -21,6 +21,4 @@ matplotlib
 opencv-python
 tqdm
 einops
-torch
-torchvision
 wandb
