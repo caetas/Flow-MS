@@ -9,6 +9,9 @@ from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 import wandb
+from config import models_dir
+import os
+from zuko.utils import odeint
 
 def exists(x):
     return x is not None
@@ -378,6 +381,12 @@ class UNet(nn.Module):
 def reparametrize(noise, mu, sigma):
     return noise * sigma + mu
 
+def create_checkpoint_dir():
+    if not os.path.exists(models_dir):
+        os.makedirs(models_dir)
+    if not os.path.exists(os.path.join(models_dir, 'FlowMS')):
+        os.makedirs(os.path.join(models_dir, 'FlowMS'))
+
 class FlowMS(nn.Module):
 
     def __init__(self, args, channels=3):
@@ -404,7 +413,7 @@ class FlowMS(nn.Module):
         sigma_min = 1e-4
         t = torch.rand(x.shape[0], device=x.device)
         noise = torch.randn_like(x)
-        noise = (mask>0.).float() * reparametrize(noise, 1.5, 0.5) + (mask<=0.).float() * reparametrize(noise, -1.5, 0.5)
+        noise = (mask>0.).float() * reparametrize(noise, 2, 0.75) + (mask<=0.).float() * reparametrize(noise, -2, 0.75)
 
         x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
         optimal_flow = x - (1 - sigma_min) * noise
@@ -415,13 +424,20 @@ class FlowMS(nn.Module):
     @torch.no_grad()
     def sample_from_mask(self, mask, n_steps, train=True):
         noise = torch.randn_like(mask)
-        noise = (mask>0.).float() * reparametrize(noise, 1.5, 0.5) + (mask<=0.).float() * reparametrize(noise, -1.5, 0.5)
+        noise = (mask>0.).float() * reparametrize(noise, 2, 0.75) + (mask<=0.).float() * reparametrize(noise, -2, 0.75)
         x_t = noise
         t = 0.
+
+        def f(t: float, x):
+            return self.forward(x, torch.full(x.shape[:1], t, device=self.device))
+        
+        x_t = odeint(f, x_t, 0, 1, phi=self.unet.parameters())
+
+        '''
         for i in range(n_steps):
             x_t = self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
             t += 1./n_steps
-        
+        '''
         x_t = (x_t + 1.) / 2.
         x_t = torch.clamp(x_t, 0., 1.)
         fig = plt.figure(figsize=(10, 10))
@@ -442,12 +458,21 @@ class FlowMS(nn.Module):
         
         x_t = x
         t=1.
+
+        def f(t: float, x):
+            return self.forward(x, torch.full(x.shape[:1], t, device=self.device))
+        
+        x_t = odeint(f, x_t, 1, 0, phi=self.unet.parameters())
+
+        '''
         for i in range(n_steps):
             x_t = -self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
             t -= 1./n_steps
-        
+        '''
         x_t = (x_t + 1.) / 2.
         x_t = torch.clamp(x_t, 0., 1.)
+        # average the channels
+        x_t = x_t.mean(dim=1, keepdim=True)
         x_t[x_t > 0.5] = 1.
         x_t[x_t <= 0.5] = 0.
 
@@ -468,9 +493,12 @@ class FlowMS(nn.Module):
         '''
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
         epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
-        
+        create_checkpoint_dir()
+
+        best_loss = float('inf')
         for epoch in epoch_bar:
             epoch_loss = 0.
+            self.unet.train()
             for x, mask in tqdm(dataloader, desc='Batches', leave=False):
                 x = x.to(self.device)
                 mask = mask.to(self.device)
@@ -489,6 +517,30 @@ class FlowMS(nn.Module):
                 self.sample_from_mask(mask, self.args.n_steps)
                 x = x.to(self.device)
                 self.segment_image(x, self.args.n_steps)
+            
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
+                torch.save(self.unet.state_dict(), os.path.join(models_dir, 'FlowMS', 'FlowMS.pt'))
+
+    def load_model(self, model_path):
+        '''
+        Load the FlowMS model
+        :param model_path: path to the model
+        '''
+        self.unet.load_state_dict(torch.load(model_path))
+        self.unet.eval()
+
+    def sample(self, test_loader):
+        '''
+        Sample from the FlowMS model
+        :param test_loader: test loader
+        '''
+        self.unet.eval()
+        x, mask = next(iter(test_loader))
+        mask = mask.to(self.device)
+        self.sample_from_mask(mask, self.args.n_steps, train=False)
+        x = x.to(self.device)
+        self.segment_image(x, self.args.n_steps, train=False)
         
 
                 
