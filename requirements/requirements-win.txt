@@ -22,3 +22,4 @@ opencv-python
 tqdm
 einops
 wandb
+zuko

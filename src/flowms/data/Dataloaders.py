@@ -33,16 +33,17 @@ class BCCD(Dataset):
         # resize both to 64x64
         img = cv2.resize(img, (self.size, self.size))
         mask = cv2.resize(mask, (self.size, self.size))
-        mask[mask > 127] = 255
         mask[mask <= 127] = 0
+        mask[mask > 127] = 1
         # make mask float3 AND RANGE -1, 1
-        mask = mask.astype(np.float32) / 255.
-        mask = mask * 2 - 1
+        #mask = mask.astype(np.float32) / 255.
+        #mask = mask * 2 - 1
         img = img.astype(np.float32) / 255.
         img = img * 2 - 1
 
         img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
-        mask = torch.from_numpy(mask).permute(2, 0, 1).contiguous()
+        #mask = torch.from_numpy(mask).permute(2, 0, 1).contiguous()
+        mask = mask[:,:,0]
 
         return img, mask
     
@@ -51,3 +52,4 @@ def train_loader(size=64, batch_size=8):
 
 def test_loader(size=64, batch_size=8):
     return DataLoader(BCCD(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=False)
+

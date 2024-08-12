@@ -1,4 +1,5 @@
 import argparse
+import torch
 
 def parse_args():
     argparser = argparse.ArgumentParser()
@@ -17,6 +18,7 @@ def parse_args():
     argparser.add_argument('--checkpoint', type=str, default=None, help='checkpoint path')
     argparser.add_argument('--n_samples', type=int, default=16, help='number of samples')
     argparser.add_argument('--n_steps', type=int, default=50, help='number of steps')
+    argparser.add_argument('--n_classes', type=int, default=2, help='number of classes')
     args = argparser.parse_args()
     args.channel_scale_factors = tuple(args.channel_scale_factors)
     return args

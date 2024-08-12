@@ -12,6 +12,7 @@ import wandb
 from config import models_dir
 import os
 from zuko.utils import odeint
+import numpy as np
 
 def exists(x):
     return x is not None
@@ -378,8 +379,81 @@ class UNet(nn.Module):
         
         return self.final_conv(x)
 
-def reparametrize(noise, mu, sigma):
-    return noise * sigma + mu
+#def reparametrize(noise, mu, sigma):
+#    return noise * sigma + mu
+
+def mask_to_gaussian(mask, mean, variance, img_shape = None):
+    if img_shape is None:
+        img_shape = mask.shape
+    eps = torch.randn(img_shape)
+    z = reparametrize(mean, variance, eps)
+    z = z.to(mask.device)*mask.unsqueeze(1)
+    return z
+
+def reparametrize(mean, var, eps):
+    # random array of size 3,1000
+    # make mean the same shape as eps by repeating the mean 1000 times
+    mean = mean[:, None, None]
+    # make var the same shape as eps
+    var = var[:, None, None]
+    return mean + eps * torch.sqrt(var)
+
+def single_plane(n_classes, dist, z=0):
+    if n_classes == 1:
+        mean = [torch.tensor([0, 0, z])]
+    elif n_classes == 2:
+        mean = [torch.tensor([-dist/2, 0, z]), torch.tensor([dist/2, 0, z])]
+    elif n_classes == 3:
+        mean = [torch.tensor([-dist, 0, z]), torch.tensor([0, 0, z]), torch.tensor([dist, 0, z])]
+    elif n_classes == 4:
+        mean = [torch.tensor([-dist/2, -dist/2, z]), torch.tensor([dist/2, -dist/2, z]), torch.tensor([-dist/2, dist/2, z]), torch.tensor([dist/2, dist/2, z])]
+    elif n_classes == 5:
+        mean = [torch.tensor([-dist, 0, z]), torch.tensor([0, 0, z]), torch.tensor([dist, 0, z]), torch.tensor([0, dist, z]), torch.tensor([0, -dist, z])]
+    elif n_classes == 6:
+        mean = [torch.tensor([-dist/2, -dist, z]), torch.tensor([dist/2, -dist, z]), torch.tensor([-dist/2, 0, z]), torch.tensor([dist/2, 0, z]), torch.tensor([-dist/2, dist, z]), torch.tensor([dist/2, dist, z])]
+    elif n_classes == 7:
+        mean = [torch.tensor([-dist, -dist, z]), torch.tensor([dist, -dist, z]), torch.tensor([-dist, 0, z]), torch.tensor([0, 0, z]), torch.tensor([dist, 0, z]), torch.tensor([-dist, dist, z]), torch.tensor([dist, dist, z])]
+    elif n_classes == 8:
+        mean = [torch.tensor([-dist, -dist, z]), torch.tensor([0, -dist, z]), torch.tensor([dist, -dist, z]), torch.tensor([-dist, 0, z]), torch.tensor([dist, 0, z]), torch.tensor([-dist, dist, z]), torch.tensor([0, dist, z]), torch.tensor([dist, dist, z])]
+    else:
+        mean = [torch.tensor([-dist, -dist, z]), torch.tensor([0, -dist, z]), torch.tensor([dist, -dist, z]), torch.tensor([-dist, 0, z]), torch.tensor([0, 0, z]), torch.tensor([dist, 0, z]), torch.tensor([-dist, dist, z]), torch.tensor([0, dist, z]), torch.tensor([dist, dist, z])]
+    return mean
+
+def class_to_gaussian(n_classes, dist=2.5, variance = 0.5):
+    assert n_classes <= 27, "Only 27 classes are supported"
+    assert n_classes > 1, "At least 2 classes are needed"
+    mean = []
+    if n_classes <= 3:
+        var = torch.tensor([variance, 1, 1]) # only need to use 1 channel
+        mean = single_plane(n_classes, dist)
+    elif n_classes <= 9:
+        var = torch.tensor([variance, variance, 1]) # need 2 channels only
+        mean = single_plane(n_classes, dist)
+    else:
+        if n_classes <= 18:
+            var = torch.tensor([variance, variance, variance])
+            mean = single_plane(9, dist, -dist/2)
+            mean.extend(single_plane(n_classes-9, dist, dist/2))
+        else:
+            var = torch.tensor([variance, variance, variance])
+            mean = single_plane(9, dist, -dist)
+            mean.extend(single_plane(9, dist, 0))
+            mean.extend(single_plane(n_classes-18, dist, dist))
+    return mean, var
+
+def gaussian_to_class(mean, map):
+    class_dist = []
+    for m in mean:
+        if len(map.shape) > 2:
+            dist = abs(map - m[:, None, None])
+        else:
+            dist = abs(map - m[:, None])
+        class_dist.append(torch.mean(dist, axis=1))
+    class_dist = torch.stack(class_dist)
+    class_map = torch.argmin(class_dist, axis=0).unsqueeze(1)
+
+    return class_map.float()
+
 
 def create_checkpoint_dir():
     if not os.path.exists(models_dir):
@@ -400,6 +474,9 @@ class FlowMS(nn.Module):
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.unet.to(self.device)
+        self.mean, self.var = class_to_gaussian(args.n_classes, dist = 3, variance=0.25)
+        self.n_classes = args.n_classes
+        self.colors = torch.rand(args.n_classes, 3)
 
     def forward(self, x, time):
         '''
@@ -412,8 +489,14 @@ class FlowMS(nn.Module):
     def conditional_flow_matching_loss(self, x, mask):
         sigma_min = 1e-4
         t = torch.rand(x.shape[0], device=x.device)
-        noise = torch.randn_like(x)
-        noise = (mask>0.).float() * reparametrize(noise, 2, 0.75) + (mask<=0.).float() * reparametrize(noise, -2, 0.75)
+        #noise = torch.randn_like(x)
+        #noise = (mask>0.).float() * reparametrize(noise, 2, 0.75) + (mask<=0.).float() * reparametrize(noise, -2, 0.75)
+        for i in range(self.n_classes):
+            inst_mask = (mask == i).float()
+            if i == 0:
+                noise = mask_to_gaussian(inst_mask, self.mean[i], self.var, x.shape)
+            else:
+                noise += mask_to_gaussian(inst_mask, self.mean[i], self.var, x.shape)
 
         x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
         optimal_flow = x - (1 - sigma_min) * noise
@@ -422,22 +505,28 @@ class FlowMS(nn.Module):
         return (predicted_flow - optimal_flow).square().mean()
     
     @torch.no_grad()
-    def sample_from_mask(self, mask, n_steps, train=True):
-        noise = torch.randn_like(mask)
-        noise = (mask>0.).float() * reparametrize(noise, 2, 0.75) + (mask<=0.).float() * reparametrize(noise, -2, 0.75)
+    def sample_from_mask(self, mask, n_steps, train=True, shape = None):
+        if shape is None:
+            shape = mask.shape
+        for i in range(self.n_classes):
+            inst_mask = (mask == i).float()
+            if i == 0:
+                noise = mask_to_gaussian(inst_mask, self.mean[i], self.var, shape)
+            else:
+                noise += mask_to_gaussian(inst_mask, self.mean[i], self.var, shape)
         x_t = noise
         t = 0.
 
         def f(t: float, x):
             return self.forward(x, torch.full(x.shape[:1], t, device=self.device))
         
-        x_t = odeint(f, x_t, 0, 1, phi=self.unet.parameters())
+        #x_t = odeint(f, x_t, 0, 1, phi=self.unet.parameters())
 
-        '''
-        for i in range(n_steps):
+        
+        for i in tqdm(range(n_steps), desc='Sampling'):
             x_t = self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
             t += 1./n_steps
-        '''
+        
         x_t = (x_t + 1.) / 2.
         x_t = torch.clamp(x_t, 0., 1.)
         fig = plt.figure(figsize=(10, 10))
@@ -455,30 +544,48 @@ class FlowMS(nn.Module):
         Segment the image
         :param x: input image
         '''
-        
+        original_x = x.clone()
         x_t = x
         t=1.
 
         def f(t: float, x):
             return self.forward(x, torch.full(x.shape[:1], t, device=self.device))
         
-        x_t = odeint(f, x_t, 1, 0, phi=self.unet.parameters())
+        #x_t = odeint(f, x_t, 1, 0, phi=self.unet.parameters())
 
-        '''
-        for i in range(n_steps):
+        
+        for i in tqdm(range(n_steps), desc='Segmenting'):
             x_t = -self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
             t -= 1./n_steps
-        '''
-        x_t = (x_t + 1.) / 2.
-        x_t = torch.clamp(x_t, 0., 1.)
+        
+        x_t = gaussian_to_class(self.mean, x_t.cpu())
+        # normalize x_t to [0, 1]
+        x_t = x_t/float(self.n_classes-1)
+        #x_t = (x_t + 1.) / 2.
+        #x_t = torch.clamp(x_t, 0., 1.)
         # average the channels
-        x_t = x_t.mean(dim=1, keepdim=True)
-        x_t[x_t > 0.5] = 1.
-        x_t[x_t <= 0.5] = 0.
+        #x_t = x_t.mean(dim=1, keepdim=True)
+        #x_t = x_t[:, 0, :, :].unsqueeze(1)
+        #x_t[x_t > 0.5] = 1.
+        #x_t[x_t <= 0.5] = 0.
 
-        fig = plt.figure(figsize=(10, 10))
+        original_x = (original_x + 1.) / 2.
+        original_x = torch.clamp(original_x, 0., 1.)
+
+        fig = plt.figure(figsize=(20, 10))
         grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
+
+        # make another grid for the original image
+        original_grid = make_grid(original_x, nrow=int(original_x.shape[0]**0.5))
+
+        # plot both grids
+        plt.subplot(1, 2, 1)
+        plt.imshow(original_grid.permute(1, 2, 0).cpu().numpy())
+        plt.subplot(1, 2, 2)
         plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
+        # remove ticks
+        plt.xticks([])
+        plt.yticks([])
         if train:
             wandb.log({"segmentation": fig})
         else:
@@ -514,7 +621,7 @@ class FlowMS(nn.Module):
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
                 x, mask = next(iter(testloader))
                 mask = mask.to(self.device)
-                self.sample_from_mask(mask, self.args.n_steps)
+                self.sample_from_mask(mask, self.args.n_steps, shape=x.shape)
                 x = x.to(self.device)
                 self.segment_image(x, self.args.n_steps)
             
@@ -538,7 +645,7 @@ class FlowMS(nn.Module):
         self.unet.eval()
         x, mask = next(iter(test_loader))
         mask = mask.to(self.device)
-        self.sample_from_mask(mask, self.args.n_steps, train=False)
+        self.sample_from_mask(mask, self.args.n_steps, train=False, shape=x.shape)
         x = x.to(self.device)
         self.segment_image(x, self.args.n_steps, train=False)
         
