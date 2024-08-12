@@ -665,7 +665,7 @@ class FlowMS(nn.Module):
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
-                torch.save(self.unet.state_dict(), os.path.join(models_dir, 'FlowMS', 'FlowMS.pt'))
+                torch.save(self.unet.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}.pt'))
 
     def load_model(self, model_path):
         '''

@@ -65,7 +65,7 @@ class BraTS(Dataset):
         np.random.shuffle(self.h5files)
         np.random.seed(None)
         if train:
-            self.h5files = self.h5files[:int(0.1*len(self.h5files))]
+            self.h5files = self.h5files[:int(0.8*len(self.h5files))]
         else:
             self.h5files = self.h5files[int(0.8*len(self.h5files)):]
 
