@@ -474,9 +474,9 @@ class FlowMS(nn.Module):
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.unet.to(self.device)
-        self.mean, self.var = class_to_gaussian(args.n_classes, dist = 3, variance=0.25)
+        self.mean, self.var = class_to_gaussian(args.n_classes, dist = args.dist, variance=args.var)
         self.n_classes = args.n_classes
-        self.colors = torch.rand(args.n_classes, 3)
+        self.dataset = args.dataset
 
     def forward(self, x, time):
         '''
@@ -529,9 +529,26 @@ class FlowMS(nn.Module):
         
         x_t = (x_t + 1.) / 2.
         x_t = torch.clamp(x_t, 0., 1.)
-        fig = plt.figure(figsize=(10, 10))
-        grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
-        plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
+
+        if self.dataset == 'bccd':
+            fig = plt.figure(figsize=(10, 10))
+            grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
+            plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
+            plt.xticks([])
+            plt.yticks([])
+        else:
+            # i want 3 grids, each containing all images, but a channel each
+            fig, axs = plt.subplots(1, self.channels, figsize=(4, 20))
+            labels = ['T1', 'T1c','T2']
+            for i in range(self.channels):
+                grid = make_grid(x_t[:, i, :, :].unsqueeze(1), nrow=1, normalize=True)
+                axs[i].imshow(grid.permute(1,2,0).cpu().numpy())
+                axs[i].set_xticks([])
+                axs[i].set_yticks([])
+                axs[i].set_title(labels[i])
+            #tight_layout()
+            plt.subplots_adjust(wspace=0, hspace=0)
+            plt.tight_layout()
         if train:
             wandb.log({"samples": fig})
         else:
@@ -572,20 +589,41 @@ class FlowMS(nn.Module):
         original_x = (original_x + 1.) / 2.
         original_x = torch.clamp(original_x, 0., 1.)
 
-        fig = plt.figure(figsize=(20, 10))
-        grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
+        if self.dataset == 'bccd':
 
-        # make another grid for the original image
-        original_grid = make_grid(original_x, nrow=int(original_x.shape[0]**0.5))
+            fig = plt.figure(figsize=(20, 10))
+            grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
 
-        # plot both grids
-        plt.subplot(1, 2, 1)
-        plt.imshow(original_grid.permute(1, 2, 0).cpu().numpy())
-        plt.subplot(1, 2, 2)
-        plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
-        # remove ticks
-        plt.xticks([])
-        plt.yticks([])
+            # make another grid for the original image
+            original_grid = make_grid(original_x, nrow=int(original_x.shape[0]**0.5))
+
+            # plot both grids
+            plt.subplot(1, 2, 1)
+            plt.imshow(original_grid.permute(1, 2, 0).cpu().numpy())
+            # set title
+            plt.title('Original Images')
+            plt.subplot(1, 2, 2)
+            plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
+            plt.title('Segmentations')
+            # remove ticks
+            plt.xticks([])
+            plt.yticks([])
+
+        else:
+            fig, axs = plt.subplots(1, self.channels+1, figsize=(5, 25))
+            labels = ['T1', 'T1c','T2']
+            for i in range(self.channels):
+                grid = make_grid(original_x[:, i, :, :].unsqueeze(1), nrow=1, normalize=True)
+                axs[i].imshow(grid.permute(1,2,0).cpu().numpy())
+                axs[i].set_xticks([])
+                axs[i].set_yticks([])
+                axs[i].set_title(labels[i])
+            grid = make_grid(x_t, nrow=1, normalize=True)
+            axs[self.channels].imshow(grid.permute(1,2,0).cpu().numpy())
+            axs[self.channels].set_xticks([])
+            axs[self.channels].set_yticks([])
+            axs[self.channels].set_title('Segmentations')
+
         if train:
             wandb.log({"segmentation": fig})
         else:

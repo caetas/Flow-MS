@@ -1,11 +1,14 @@
-from data.Dataloaders import train_loader, test_loader
+from data.Dataloaders import *
 import matplotlib.pyplot as plt
 from utils.util import parse_args
 from models.Flow_MS import FlowMS
 
 args = parse_args()
 
-testloader = test_loader(batch_size=args.n_samples)
+if args.dataset == 'bccd':
+    testloader = test_loader_bccd(batch_size=args.n_samples)
+elif args.dataset == 'brats':
+    testloader = test_loader_brats(batch_size=args.n_samples)
 
 model = FlowMS(args)
 model.load_model(args.checkpoint)

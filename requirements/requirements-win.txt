@@ -23,3 +23,4 @@ tqdm
 einops
 wandb
 zuko
+h5py

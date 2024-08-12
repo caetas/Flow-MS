@@ -1,4 +1,4 @@
-from data.Dataloaders import train_loader, test_loader
+from data.Dataloaders import *
 import matplotlib.pyplot as plt
 from utils.util import parse_args
 from models.Flow_MS import FlowMS
@@ -6,8 +6,13 @@ import wandb
 
 args = parse_args()
 
-trainloader = train_loader(batch_size=args.batch_size)
-testloader = test_loader(batch_size=args.n_samples)
+if args.dataset == 'bccd':
+    trainloader = train_loader_bccd(batch_size=args.batch_size, size=args.size)
+    testloader = test_loader_bccd(batch_size=args.n_samples, size=args.size)
+
+elif args.dataset == 'brats':
+    trainloader = train_loader_brats(batch_size=args.batch_size, size=args.size)
+    testloader = test_loader_brats(batch_size=args.n_samples, size=args.size)
 
 model = FlowMS(args)
 
@@ -25,8 +30,13 @@ wandb.init(project='Flow-MS',
                 'convnext_scale_factor': args.convnext_scale_factor,
                 'sample_and_save_freq': args.sample_and_save_freq,
                 'n_samples': args.n_samples,
-                'n_steps': args.n_steps
+                'n_steps': args.n_steps,
+                'n_classes': args.n_classes,
+                'dataset': args.dataset,
+                'size': args.size,
+                'dist': args.dist,
+                'var': args.var
               },
 
-              name = 'Flow-MS')
+              name = f"Flow-MS_{args.dataset}",)
 model.train_model(trainloader, testloader)
