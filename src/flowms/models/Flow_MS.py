@@ -529,23 +529,40 @@ class FlowMS(nn.Module):
         
         x_t = (x_t + 1.) / 2.
         x_t = torch.clamp(x_t, 0., 1.)
+        mask = mask.float()
+        mask = mask/float(self.n_classes-1)
+        mask = torch.clamp(mask, 0., 1.)
+        mask = mask.unsqueeze(1)
 
         if self.dataset == 'bccd':
-            fig = plt.figure(figsize=(10, 10))
+            fig = plt.figure(figsize=(15, 10))
+            mask_grid = make_grid(mask, nrow=int(mask.shape[0]**0.5), normalize=True)
             grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
+            # plot both grids side by side
+            plt.subplot(1, 2, 1)
             plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
+            plt.title('Sampled Images')
+            plt.subplot(1, 2, 2)
+            plt.imshow(mask_grid.permute(1, 2, 0).cpu().numpy())
+            plt.title('GT')
+            # remove ticks
             plt.xticks([])
             plt.yticks([])
         else:
             # i want 3 grids, each containing all images, but a channel each
-            fig, axs = plt.subplots(1, self.channels, figsize=(4, 20))
+            fig, axs = plt.subplots(1, self.channels+1, figsize=(4, 20))
+            mask_grid = make_grid(mask, nrow=1, normalize=True)
+            axs[0].imshow(mask_grid.permute(1, 2, 0).cpu().numpy())
+            axs[0].set_title('GT')
+            axs[0].set_xticks([])
+            axs[0].set_yticks([])
             labels = ['T1', 'T1c','T2']
             for i in range(self.channels):
                 grid = make_grid(x_t[:, i, :, :].unsqueeze(1), nrow=1, normalize=True)
-                axs[i].imshow(grid.permute(1,2,0).cpu().numpy())
-                axs[i].set_xticks([])
-                axs[i].set_yticks([])
-                axs[i].set_title(labels[i])
+                axs[i+1].imshow(grid.permute(1,2,0).cpu().numpy())
+                axs[i+1].set_xticks([])
+                axs[i+1].set_yticks([])
+                axs[i+1].set_title(labels[i])
             #tight_layout()
             plt.subplots_adjust(wspace=0, hspace=0)
             plt.tight_layout()
@@ -556,7 +573,7 @@ class FlowMS(nn.Module):
         plt.close(fig)
     
     @torch.no_grad()
-    def segment_image(self, x, n_steps, train=True):
+    def segment_image(self, x, n_steps, mask, train=True):
         '''
         Segment the image
         :param x: input image
@@ -589,6 +606,11 @@ class FlowMS(nn.Module):
         original_x = (original_x + 1.) / 2.
         original_x = torch.clamp(original_x, 0., 1.)
 
+        mask = mask.float()
+        mask = mask/float(self.n_classes-1)
+        mask = torch.clamp(mask, 0., 1.)
+        mask = mask.unsqueeze(1)
+
         if self.dataset == 'bccd':
 
             fig = plt.figure(figsize=(20, 10))
@@ -597,20 +619,26 @@ class FlowMS(nn.Module):
             # make another grid for the original image
             original_grid = make_grid(original_x, nrow=int(original_x.shape[0]**0.5))
 
+            mask_grid = make_grid(mask, nrow=int(mask.shape[0]**0.5), normalize=True)
+
             # plot both grids
-            plt.subplot(1, 2, 1)
+            plt.subplot(1, 3, 1)
             plt.imshow(original_grid.permute(1, 2, 0).cpu().numpy())
             # set title
             plt.title('Original Images')
-            plt.subplot(1, 2, 2)
+            plt.subplot(1, 3, 2)
             plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
             plt.title('Segmentations')
+            plt.subplot(1, 3, 3)
+            plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
+            plt.imshow(mask_grid.permute(1, 2, 0).cpu().numpy(), alpha=0.5)
+            plt.title('GT')
             # remove ticks
             plt.xticks([])
             plt.yticks([])
 
         else:
-            fig, axs = plt.subplots(1, self.channels+1, figsize=(5, 25))
+            fig, axs = plt.subplots(1, self.channels+2, figsize=(4, 10))
             labels = ['T1', 'T1c','T2']
             for i in range(self.channels):
                 grid = make_grid(original_x[:, i, :, :].unsqueeze(1), nrow=1, normalize=True)
@@ -622,7 +650,13 @@ class FlowMS(nn.Module):
             axs[self.channels].imshow(grid.permute(1,2,0).cpu().numpy())
             axs[self.channels].set_xticks([])
             axs[self.channels].set_yticks([])
-            axs[self.channels].set_title('Segmentations')
+            axs[self.channels].set_title('Segs')
+            grid = make_grid(mask, nrow=1, normalize=True)
+            axs[self.channels+1].imshow(grid.permute(1,2,0).cpu().numpy())
+            axs[self.channels+1].set_xticks([])
+            axs[self.channels+1].set_yticks([])
+            axs[self.channels+1].set_title('GT')
+            plt.tight_layout()
 
         if train:
             wandb.log({"segmentation": fig})
@@ -661,7 +695,7 @@ class FlowMS(nn.Module):
                 mask = mask.to(self.device)
                 self.sample_from_mask(mask, self.args.n_steps, shape=x.shape)
                 x = x.to(self.device)
-                self.segment_image(x, self.args.n_steps)
+                self.segment_image(x, self.args.n_steps, mask)
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
@@ -685,7 +719,7 @@ class FlowMS(nn.Module):
         mask = mask.to(self.device)
         self.sample_from_mask(mask, self.args.n_steps, train=False, shape=x.shape)
         x = x.to(self.device)
-        self.segment_image(x, self.args.n_steps, train=False)
+        self.segment_image(x, self.args.n_steps, mask, train=False)
         
 
                 
