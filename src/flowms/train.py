@@ -14,6 +14,10 @@ elif args.dataset == 'brats':
     trainloader = train_loader_brats(batch_size=args.batch_size, size=args.size)
     testloader = test_loader_brats(batch_size=args.n_samples, size=args.size)
 
+elif args.dataset == 'celeb':
+    trainloader = train_loader_celebamaskhq(batch_size=args.batch_size, size=args.size)
+    testloader = test_loader_celebamaskhq(batch_size=args.n_samples, size=args.size)
+
 model = FlowMS(args)
 
 wandb.init(project='Flow-MS',

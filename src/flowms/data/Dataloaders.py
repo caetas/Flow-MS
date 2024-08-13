@@ -97,6 +97,39 @@ class BraTS(Dataset):
         #mask = torch.from_numpy(mask).permute(2, 0, 1).contiguous()
 
         return img, final_mask
+    
+class CelebAMaskHQ(Dataset):
+    def __init__(self, root_dir, size=64, train=True):
+        self.root_dir = root_dir
+        self.size = size
+        self.imgs = glob(os.path.join(root_dir, 'CelebAMask-HQ', 'imgs', '*'))
+        np.random.seed(0)
+        np.random.shuffle(self.imgs)
+        np.random.seed(None)
+        if train:
+            self.imgs = self.imgs[:int(0.05*len(self.imgs))]
+        else:
+            self.imgs = self.imgs[int(0.8*len(self.imgs)):]
+
+    def __len__(self):
+        return len(self.imgs)
+
+    def __getitem__(self, idx):
+        img = Image.open(self.imgs[idx]).convert('RGB')
+        img = np.array(img)
+
+        mask = Image.open(self.imgs[idx].replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')
+        mask = np.array(mask)
+
+        img = cv2.resize(img, (self.size, self.size))
+        mask = cv2.resize(mask, (self.size, self.size))
+
+        img = img.astype(np.float32)/255.0
+        img = img * 2 - 1
+        img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
+
+        return img, mask
+    
 def train_loader_bccd(size=64, batch_size=8):
     return DataLoader(BCCD(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True)
 
@@ -107,5 +140,11 @@ def train_loader_brats(size=64, batch_size=8):
     return DataLoader(BraTS(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True)
 
 def test_loader_brats(size=64, batch_size=8):
-    return DataLoader(BraTS(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=False)
+    return DataLoader(BraTS(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
+
+def train_loader_celebamaskhq(size=64, batch_size=8):
+    return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True)
+
+def test_loader_celebamaskhq(size=64, batch_size=8):
+    return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
 

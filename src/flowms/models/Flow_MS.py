@@ -534,7 +534,7 @@ class FlowMS(nn.Module):
         mask = torch.clamp(mask, 0., 1.)
         mask = mask.unsqueeze(1)
 
-        if self.dataset == 'bccd':
+        if self.dataset != 'brats':
             fig = plt.figure(figsize=(15, 10))
             mask_grid = make_grid(mask, nrow=int(mask.shape[0]**0.5), normalize=True)
             grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
@@ -611,7 +611,7 @@ class FlowMS(nn.Module):
         mask = torch.clamp(mask, 0., 1.)
         mask = mask.unsqueeze(1)
 
-        if self.dataset == 'bccd':
+        if self.dataset != 'brats':
 
             fig = plt.figure(figsize=(20, 10))
             grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
@@ -630,8 +630,7 @@ class FlowMS(nn.Module):
             plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
             plt.title('Segmentations')
             plt.subplot(1, 3, 3)
-            plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
-            plt.imshow(mask_grid.permute(1, 2, 0).cpu().numpy(), alpha=0.5)
+            plt.imshow(mask_grid.permute(1, 2, 0).cpu().numpy())
             plt.title('GT')
             # remove ticks
             plt.xticks([])
