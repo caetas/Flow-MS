@@ -550,7 +550,7 @@ class TFlowMS:
         original_x = img.clone()
         original_x = original_x*0.5 + 0.5
         original_x = original_x.clamp(0, 1)
-        for i in tqdm(range(1, sample_steps*1, 1), desc='Segmenting', leave=False):
+        for i in tqdm(range(sample_steps), desc='Segmenting', leave=False):
             t = i / sample_steps
             t = torch.tensor([t] * b).to(img.device)
 
