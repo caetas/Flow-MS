@@ -107,7 +107,7 @@ class CelebAMaskHQ(Dataset):
         np.random.shuffle(self.imgs)
         np.random.seed(None)
         if train:
-            self.imgs = self.imgs[:int(0.8*len(self.imgs))]
+            self.imgs = self.imgs[:int(0.05*len(self.imgs))]
         else:
             self.imgs = self.imgs[int(0.8*len(self.imgs)):]
 
