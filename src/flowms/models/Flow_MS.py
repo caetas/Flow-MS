@@ -477,6 +477,8 @@ class FlowMS(nn.Module):
         self.mean, self.var = class_to_gaussian(args.n_classes, dist = args.dist, variance=args.var)
         self.n_classes = args.n_classes
         self.dataset = args.dataset
+        self.warmup = args.warmup
+        self.decay = args.decay
 
     def forward(self, x, time):
         '''
@@ -669,9 +671,12 @@ class FlowMS(nn.Module):
         Train the FlowMS model
         :param dataloader: dataloader for the dataset
         '''
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=self.decay)
         epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
         create_checkpoint_dir()
+
+        lr_lambda = lambda epoch: min(1.0, (epoch + 1) / self.warmup)  # noqa
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
         best_loss = float('inf')
         for epoch in epoch_bar:
@@ -688,6 +693,7 @@ class FlowMS(nn.Module):
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
             wandb.log({"loss": epoch_loss})
+            scheduler.step()
 
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
                 x, mask = next(iter(testloader))

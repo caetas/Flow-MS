@@ -26,3 +26,5 @@ torchvision
 wandb
 zuko
 h5py
+diffusers
+accelerate

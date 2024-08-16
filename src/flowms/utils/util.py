@@ -21,6 +21,8 @@ def parse_args():
     argparser.add_argument('--size', type=int, default=64, help='size of image')
     argparser.add_argument('--dist', type=float, default=3.0, help='distance between distributions')
     argparser.add_argument('--var', type=float, default=0.25, help='variance of distribution')
+    argparser.add_argument('--warmup', type=int, default=10, help='warmup epochs')
+    argparser.add_argument('--decay', type=float, default=1e-5, help='decay rate')
     args = argparser.parse_args()
     args.channel_scale_factors = tuple(args.channel_scale_factors)
     return args

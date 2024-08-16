@@ -24,3 +24,5 @@ einops
 wandb
 zuko
 h5py
+diffusers
+accelerate
