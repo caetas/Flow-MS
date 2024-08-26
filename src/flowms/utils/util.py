@@ -23,6 +23,9 @@ def parse_args():
     argparser.add_argument('--var', type=float, default=0.25, help='variance of distribution')
     argparser.add_argument('--warmup', type=int, default=10, help='warmup epochs')
     argparser.add_argument('--decay', type=float, default=1e-5, help='decay rate')
+    argparser.add_argument('--solver', type=str, default='dopri5', help='solver for ODE', choices=['dopri5', 'rk4', 'dopri8', 'euler', 'bosh3', 'adaptive_heun', 'midpoint', 'explicit_adams', 'implicit_adams'])
+    argparser.add_argument('--ode', action='store_true', default=False, help='use ODE solver')
+    argparser.add_argument('--clip', action='store_true', default=False, help='clip the gaussians')
     args = argparser.parse_args()
     args.channel_scale_factors = tuple(args.channel_scale_factors)
     return args

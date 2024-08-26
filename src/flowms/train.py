@@ -42,7 +42,8 @@ if __name__ == '__main__':
                     'dist': args.dist,
                     'var': args.var,
                     'warmup': args.warmup,
-                    'decay': args.decay
+                    'decay': args.decay,
+                    'clip': args.clip
                 },
 
                 name = f"Flow-MS_{args.dataset}",)

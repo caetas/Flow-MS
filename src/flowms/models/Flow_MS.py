@@ -11,7 +11,7 @@ from tqdm import tqdm, trange
 import wandb
 from config import models_dir
 import os
-from zuko.utils import odeint
+from torchdiffeq import odeint
 import numpy as np
 
 def exists(x):
@@ -382,21 +382,24 @@ class UNet(nn.Module):
 #def reparametrize(noise, mu, sigma):
 #    return noise * sigma + mu
 
-def mask_to_gaussian(mask, mean, variance, img_shape = None):
+def mask_to_gaussian(mask, mean, variance, dist=None, img_shape = None):
     if img_shape is None:
         img_shape = mask.shape
     eps = torch.randn(img_shape)
-    z = reparametrize(mean, variance, eps)
+    z = reparametrize(mean, variance, eps, dist)
     z = z.to(mask.device)*mask.unsqueeze(1)
     return z
 
-def reparametrize(mean, var, eps):
-    # random array of size 3,1000
+def reparametrize(mean, var, eps, dist = None):
     # make mean the same shape as eps by repeating the mean 1000 times
     mean = mean[:, None, None]
     # make var the same shape as eps
     var = var[:, None, None]
-    return mean + eps * torch.sqrt(var)
+    if dist is not None:
+        # clip the values of each channel to be within mean - dist and mean + dist
+        return torch.clamp(mean + eps * torch.sqrt(var), min=mean-dist/2 + 1e-6, max=mean+dist/2+1e-6)
+    else:
+        return mean + eps * torch.sqrt(var)
 
 def single_plane(n_classes, dist, z=0):
     if n_classes == 1:
@@ -479,6 +482,13 @@ class FlowMS(nn.Module):
         self.dataset = args.dataset
         self.warmup = args.warmup
         self.decay = args.decay
+        self.ode = args.ode
+        self.solver = args.solver
+        self.clip = args.clip
+        if self.clip:
+            self.dist = args.dist
+        else:
+            self.dist = None
 
     def forward(self, x, time):
         '''
@@ -496,9 +506,9 @@ class FlowMS(nn.Module):
         for i in range(self.n_classes):
             inst_mask = (mask == i).float()
             if i == 0:
-                noise = mask_to_gaussian(inst_mask, self.mean[i], self.var, x.shape)
+                noise = mask_to_gaussian(inst_mask, self.mean[i], self.var, self.dist, x.shape)
             else:
-                noise += mask_to_gaussian(inst_mask, self.mean[i], self.var, x.shape)
+                noise += mask_to_gaussian(inst_mask, self.mean[i], self.var, self.dist, x.shape)
 
         x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
         optimal_flow = x - (1 - sigma_min) * noise
@@ -513,21 +523,29 @@ class FlowMS(nn.Module):
         for i in range(self.n_classes):
             inst_mask = (mask == i).float()
             if i == 0:
-                noise = mask_to_gaussian(inst_mask, self.mean[i], self.var, shape)
+                noise = mask_to_gaussian(inst_mask, self.mean[i], self.var, self.dist, shape)
             else:
-                noise += mask_to_gaussian(inst_mask, self.mean[i], self.var, shape)
+                noise += mask_to_gaussian(inst_mask, self.mean[i], self.var, self.dist, shape)
         x_t = noise
         t = 0.
 
-        def f(t: float, x):
-            return self.forward(x, torch.full(x.shape[:1], t, device=self.device))
-        
-        #x_t = odeint(f, x_t, 0, 1, phi=self.unet.parameters())
+        if self.ode:
 
-        
-        for i in tqdm(range(n_steps), desc='Sampling'):
-            x_t = self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
-            t += 1./n_steps
+            print('Sampling using ODE solver...')
+
+            def f(t: float, x):
+                return self.forward(x, torch.full(x.shape[:1], t, device=self.device))
+            
+            if self.solver == 'euler' or self.solver == 'rk4' or self.solver == 'midpoint' or self.solver == 'explicit_adams' or self.solver == 'implicit_adams':
+                samples = odeint(f, x_t, t=torch.linspace(0, 1, 2).to(self.device), options={'step_size': 1./float(n_steps)}, method=self.solver, rtol=1e-5, atol=1e-5)
+            else:
+                samples = odeint(f, x_t, t=torch.linspace(0, 1, 2).to(self.device), method=self.solver, options={'max_num_steps': n_steps}, rtol=1e-5, atol=1e-5)
+            x_t = samples[1]
+
+        else:
+            for i in tqdm(range(n_steps), desc='Sampling'):
+                x_t = self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
+                t += 1./n_steps
         
         x_t = (x_t + 1.) / 2.
         x_t = torch.clamp(x_t, 0., 1.)
@@ -584,15 +602,26 @@ class FlowMS(nn.Module):
         x_t = x
         t=1.
 
-        def f(t: float, x):
-            return self.forward(x, torch.full(x.shape[:1], t, device=self.device))
+        if self.ode:
+
+            print('Segmenting using ODE solver...')
+
+            def f(t: float, x):
+                return self.forward(x, torch.full(x.shape[:1], t, device=self.device))
+            
+            
+            if self.solver == 'euler' or self.solver == 'rk4' or self.solver == 'midpoint' or self.solver == 'explicit_adams' or self.solver == 'implicit_adams':
+                samples = odeint(f, x_t, t=torch.linspace(1, 0, 2).to(self.device), options={'step_size': 1./float(n_steps)}, method=self.solver, rtol=1e-5, atol=1e-5)
+            else:
+                samples = odeint(f, x_t, t=torch.linspace(1, 0, 2).to(self.device), method=self.solver, options={'max_num_steps': n_steps}, rtol=1e-5, atol=1e-5)
+            x_t = samples[1]
         
         #x_t = odeint(f, x_t, 1, 0, phi=self.unet.parameters())
 
-        
-        for i in tqdm(range(n_steps), desc='Segmenting'):
-            x_t = -self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
-            t -= 1./n_steps
+        else:
+            for i in tqdm(range(n_steps), desc='Segmenting'):
+                x_t = -self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
+                t -= 1./n_steps
         
         x_t = gaussian_to_class(self.mean, x_t.cpu())
         # normalize x_t to [0, 1]
