@@ -130,20 +130,20 @@ class CelebAMaskHQ(Dataset):
 
         return img, mask
     
-def train_loader_bccd(size=64, batch_size=8):
-    return DataLoader(BCCD(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True)
+def train_loader_bccd(size=64, batch_size=8, num_workers=0):
+    return DataLoader(BCCD(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
 def test_loader_bccd(size=64, batch_size=8):
     return DataLoader(BCCD(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=False)
 
-def train_loader_brats(size=64, batch_size=8):
-    return DataLoader(BraTS(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True)
+def train_loader_brats(size=64, batch_size=8, num_workers=0):
+    return DataLoader(BraTS(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
 def test_loader_brats(size=64, batch_size=8):
     return DataLoader(BraTS(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
 
-def train_loader_celebamaskhq(size=64, batch_size=8):
-    return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True)
+def train_loader_celebamaskhq(size=64, batch_size=8, num_workers=0):
+    return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
 def test_loader_celebamaskhq(size=64, batch_size=8):
     return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
