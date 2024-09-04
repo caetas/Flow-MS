@@ -19,6 +19,10 @@ if __name__ == '__main__':
         trainloader = train_loader_celebamaskhq(batch_size=args.batch_size, size=args.size, num_workers=args.num_workers)
         testloader = test_loader_celebamaskhq(batch_size=args.n_samples, size=args.size)
 
+    elif args.dataset == 'cityscapes':
+        trainloader = train_loader_cityscapes(batch_size=args.batch_size, size=args.size, num_workers=args.num_workers)
+        testloader = test_loader_cityscapes(batch_size=args.n_samples, size=args.size)
+
     model = FlowMS(args)
 
     wandb.init(project='Flow-MS',

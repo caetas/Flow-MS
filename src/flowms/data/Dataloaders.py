@@ -9,6 +9,8 @@ import cv2
 from PIL import Image
 import h5py
 from tqdm import tqdm
+from torchvision import transforms
+from torchvision.datasets import Cityscapes
 
 class BCCD(Dataset):
     def __init__(self, root_dir, size=64, train=True):
@@ -130,6 +132,42 @@ class CelebAMaskHQ(Dataset):
 
         return img, mask
     
+def remap_labels(mask, classes):
+    for c in classes:
+        if c.train_id == 255 or c.train_id == -1:
+            mask[mask == c.id] = 0
+        else:
+            mask[mask == c.id] = c.train_id
+    return mask
+
+class CustomCityscapes(Dataset):
+    def __init__(self, root_dir, split='train', mode='fine', target_type='semantic', size=64):
+        self.root_dir = root_dir
+        self.split = split
+        self.mode = mode
+        self.target_type = target_type
+        dataset = Cityscapes(root_dir, split=split, mode=mode, target_type=target_type)
+        self.images = dataset.images
+        self.targets = dataset.targets
+        self.classes = dataset.classes
+        self.size = size
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        img = Image.open(self.images[idx]).convert('RGB')
+        target = Image.open(self.targets[idx][0]).convert('L')
+        img = np.array(img)
+        target = np.array(target)
+        img = cv2.resize(img, (self.size, self.size))
+        target = cv2.resize(target, (self.size, self.size))
+        img = img.astype(np.float32) / 255.0
+        img = img * 2 - 1
+        img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
+        target = remap_labels(target, self.classes)
+        return img, target
+    
 def train_loader_bccd(size=64, batch_size=8, num_workers=0):
     return DataLoader(BCCD(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
@@ -148,3 +186,8 @@ def train_loader_celebamaskhq(size=64, batch_size=8, num_workers=0):
 def test_loader_celebamaskhq(size=64, batch_size=8):
     return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
 
+def train_loader_cityscapes(size=64, batch_size=8, num_workers=0):
+    return DataLoader(CustomCityscapes(os.path.join(data_raw_dir, 'Cityscapes'), split='train', mode='fine', target_type='semantic', size=size), batch_size=batch_size, shuffle=True, num_workers=num_workers)
+
+def test_loader_cityscapes(size=64, batch_size=8):
+    return DataLoader(CustomCityscapes(os.path.join(data_raw_dir, 'Cityscapes'), split='val', mode='fine', target_type='semantic', size=size), batch_size=batch_size, shuffle=True)

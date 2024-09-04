@@ -17,7 +17,7 @@ def parse_args():
     argparser.add_argument('--n_samples', type=int, default=16, help='number of samples')
     argparser.add_argument('--n_steps', type=int, default=50, help='number of steps')
     argparser.add_argument('--n_classes', type=int, default=2, help='number of classes')
-    argparser.add_argument('--dataset', type=str, default='bccd', help='dataset', choices=['bccd', 'brats', 'celeb'])
+    argparser.add_argument('--dataset', type=str, default='bccd', help='dataset', choices=['bccd', 'brats', 'celeb', 'cityscapes'])
     argparser.add_argument('--size', type=int, default=64, help='size of image')
     argparser.add_argument('--dist', type=float, default=3.0, help='distance between distributions')
     argparser.add_argument('--var', type=float, default=0.25, help='variance of distribution')
