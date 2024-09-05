@@ -161,21 +161,13 @@ class CustomCityscapes(Dataset):
         target = Image.open(self.targets[idx][0]).convert('L')
         img = np.array(img)
         target = np.array(target)
-        # resize smaller dimension to size
-        if img.shape[0] < img.shape[1]:
-            img = cv2.resize(img, (int(self.size * img.shape[1] / img.shape[0]), self.size))
-            target = cv2.resize(target, (int(self.size * img.shape[1] / img.shape[0]), self.size))
-            random_crop = np.random.randint(0, img.shape[1] - self.size)
-            img = img[:, random_crop:random_crop+self.size]
-            target = target[:, random_crop:random_crop+self.size]
-        else:
-            img = cv2.resize(img, (self.size, int(self.size * img.shape[0] / img.shape[1])))
-            target = cv2.resize(target, (self.size, int(self.size * img.shape[0] / img.shape[1])))
-            random_crop = np.random.randint(0, img.shape[0] - self.size)
-            img = img[random_crop:random_crop+self.size, :]
-            target = target[random_crop:random_crop+self.size, :]
-        #img = cv2.resize(img, (self.size, self.size))
-        #target = cv2.resize(target, (self.size, self.size))
+        
+        img = cv2.resize(img, (int(self.size * img.shape[1] / img.shape[0]), self.size))
+        target = cv2.resize(target, (int(self.size * img.shape[1] / img.shape[0]), self.size))
+        random_crop = np.random.randint(0, img.shape[1] - self.size)
+        img = img[:, random_crop:random_crop+self.size]
+        target = target[:, random_crop:random_crop+self.size]
+
         img = img.astype(np.float32) / 255.0
         img = img * 2 - 1
         img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
