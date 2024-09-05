@@ -486,7 +486,7 @@ class FlowMS(nn.Module):
         self.solver = args.solver
         self.clip = args.clip
         if self.clip:
-            self.dist = args.dist
+            self.dist = args.clip_dist
         else:
             self.dist = None
 

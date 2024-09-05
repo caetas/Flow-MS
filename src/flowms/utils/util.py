@@ -53,6 +53,7 @@ def parse_args_RF():
     argparser.add_argument('--dataset', type=str, default='bccd', help='dataset', choices=['bccd', 'brats', 'celeb'])
     argparser.add_argument('--size', type=int, default=64, help='size of image')
     argparser.add_argument('--dist', type=float, default=3.0, help='distance between distributions')
+    argparser.add_argument('--clip_dist', type=float, default=3.0, help='length of the cube')
     argparser.add_argument('--var', type=float, default=0.25, help='variance of distribution')
     argparser.add_argument('--n_samples', type=int, default=16, help='number of samples')
     return argparser.parse_args()
