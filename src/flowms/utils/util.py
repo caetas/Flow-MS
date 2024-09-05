@@ -26,6 +26,7 @@ def parse_args():
     argparser.add_argument('--solver', type=str, default='dopri5', help='solver for ODE', choices=['dopri5', 'rk4', 'dopri8', 'euler', 'bosh3', 'adaptive_heun', 'midpoint', 'explicit_adams', 'implicit_adams'])
     argparser.add_argument('--ode', action='store_true', default=False, help='use ODE solver')
     argparser.add_argument('--clip', action='store_true', default=False, help='clip the gaussians')
+    argparser.add_argument('--clip_dist', type=float, default=3.0, help='length of the cube')
     argparser.add_argument('--num_workers', type=int, default=0, help='number of workers')
     args = argparser.parse_args()
     args.channel_scale_factors = tuple(args.channel_scale_factors)
