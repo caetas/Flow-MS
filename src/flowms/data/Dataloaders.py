@@ -160,7 +160,7 @@ class CustomCityscapes(Dataset):
         og_img = Image.open(self.images[idx]).convert('RGB')
         og_target = Image.open(self.targets[idx][0]).convert('L')
         og_img = np.array(og_img)
-        og_target = np.array(target)
+        og_target = np.array(og_target)
         
         og_img = cv2.resize(og_img, (self.size*2, self.size))
         og_target = cv2.resize(og_target, (self.size*2, self.size))
