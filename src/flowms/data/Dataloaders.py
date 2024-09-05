@@ -157,16 +157,16 @@ class CustomCityscapes(Dataset):
         return len(self.images)
 
     def __getitem__(self, idx):
-        img = Image.open(self.images[idx]).convert('RGB')
-        target = Image.open(self.targets[idx][0]).convert('L')
-        img = np.array(img)
-        target = np.array(target)
+        og_img = Image.open(self.images[idx]).convert('RGB')
+        og_target = Image.open(self.targets[idx][0]).convert('L')
+        og_img = np.array(og_img)
+        og_target = np.array(target)
         
-        img = cv2.resize(img, (self.size*2, self.size))
-        target = cv2.resize(target, (self.size*2, self.size))
+        og_img = cv2.resize(og_img, (self.size*2, self.size))
+        og_target = cv2.resize(og_target, (self.size*2, self.size))
         random_crop = np.random.randint(0, self.size//2)
-        img = img[:, random_crop:random_crop+self.size]
-        target = target[:, random_crop:random_crop+self.size]
+        img = og_img[:, random_crop:random_crop+self.size].copy()
+        target = og_target[:, random_crop:random_crop+self.size].copy()
 
         img = img.astype(np.float32) / 255.0
         img = img * 2 - 1
