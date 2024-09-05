@@ -162,8 +162,8 @@ class CustomCityscapes(Dataset):
         img = np.array(img)
         target = np.array(target)
         
-        img = cv2.resize(img, (int(self.size * img.shape[1] / img.shape[0]), self.size))
-        target = cv2.resize(target, (int(self.size * target.shape[1] / target.shape[0]), self.size))
+        img = cv2.resize(img, (self.size*2, self.size))
+        target = cv2.resize(target, (self.size*2, self.size))
         random_crop = np.random.randint(0, img.shape[1] - self.size)
         img = img[:, random_crop:random_crop+self.size]
         target = target[:, random_crop:random_crop+self.size]
