@@ -21,8 +21,6 @@ matplotlib
 opencv-python
 tqdm
 einops
-torch
-torchvision
 wandb
 zuko
 h5py
