@@ -489,6 +489,10 @@ class FlowMS(nn.Module):
             self.dist = args.clip_dist
         else:
             self.dist = None
+        # self.colors should be a list of n_classes of rgb values
+        np.random.seed(42)
+        self.colors = np.random.randint(0, 255, size=(args.n_classes, 3))
+        np.random.seed(None)
 
     def forward(self, x, time):
         '''
@@ -556,12 +560,22 @@ class FlowMS(nn.Module):
 
         if self.dataset != 'brats':
             fig = plt.figure(figsize=(15, 10))
-            mask_grid = make_grid(mask, nrow=int(mask.shape[0]**0.5), normalize=True)
+
+            mask = mask.cpu()*float(self.n_classes-1)
+            mask_color = torch.zeros(mask.shape[0], 3, mask.shape[2], mask.shape[3])
+            for i in range(self.n_classes):
+                mask_color += (mask==i).float() * torch.tensor(self.colors[i])[:, None, None]
+            mask_color = mask_color/255.
+            mask_grid = make_grid(mask_color, nrow=int(mask.shape[0]**0.5), normalize=True)
+
             grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
             # plot both grids side by side
             plt.subplot(1, 2, 1)
             plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
             plt.title('Sampled Images')
+            # remove ticks
+            plt.xticks([])
+            plt.yticks([])
             plt.subplot(1, 2, 2)
             plt.imshow(mask_grid.permute(1, 2, 0).cpu().numpy())
             plt.title('GT')
@@ -643,23 +657,40 @@ class FlowMS(nn.Module):
         mask = mask.unsqueeze(1)
 
         if self.dataset != 'brats':
+            # color the segmented image
+            x_t_color = torch.zeros(x_t.shape[0], 3, x_t.shape[2], x_t.shape[3])
+            x_t = x_t*float(self.n_classes-1)
+
+            for i in range(self.n_classes):
+                x_t_color += (x_t == i).float() * torch.tensor(self.colors[i])[:, None, None]
+            x_t_color = x_t_color/255.
+
+            mask = mask.cpu()*float(self.n_classes-1)
+            mask_color = torch.zeros(mask.shape[0], 3, mask.shape[2], mask.shape[3])
+            for i in range(self.n_classes):
+                mask_color += (mask==i).float() * torch.tensor(self.colors[i])[:, None, None]
+            mask_color = mask_color/255.
 
             fig = plt.figure(figsize=(20, 10))
-            grid = make_grid(x_t, nrow=int(x_t.shape[0]**0.5), normalize=True)
+            grid = make_grid(x_t_color, nrow=int(x_t.shape[0]**0.5), normalize=True)
 
             # make another grid for the original image
             original_grid = make_grid(original_x, nrow=int(original_x.shape[0]**0.5))
 
-            mask_grid = make_grid(mask, nrow=int(mask.shape[0]**0.5), normalize=True)
+            mask_grid = make_grid(mask_color, nrow=int(mask.shape[0]**0.5), normalize=True)
 
             # plot both grids
             plt.subplot(1, 3, 1)
             plt.imshow(original_grid.permute(1, 2, 0).cpu().numpy())
             # set title
             plt.title('Original Images')
+            plt.xticks([])
+            plt.yticks([])
             plt.subplot(1, 3, 2)
             plt.imshow(grid.permute(1, 2, 0).cpu().numpy())
             plt.title('Segmentations')
+            plt.xticks([])
+            plt.yticks([])
             plt.subplot(1, 3, 3)
             plt.imshow(mask_grid.permute(1, 2, 0).cpu().numpy())
             plt.title('GT')
