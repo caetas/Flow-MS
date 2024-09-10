@@ -13,7 +13,7 @@ from config import models_dir
 import os
 from torchdiffeq import odeint
 import numpy as np
-from torchmetrics.segmentation import MeanIoU, GeneralizedDiceScore
+from torchmetrics.functional.segmentation import mean_iou, generalized_dice_score
 
 def exists(x):
     return x is not None
@@ -639,6 +639,8 @@ class FlowMS(nn.Module):
                 t -= 1./n_steps
         
         x_t = gaussian_to_class(self.mean, x_t.cpu())
+        if test:
+            return x_t
         # normalize x_t to [0, 1]
         x_t = x_t/float(self.n_classes-1)
         #x_t = (x_t + 1.) / 2.
@@ -648,9 +650,6 @@ class FlowMS(nn.Module):
         #x_t = x_t[:, 0, :, :].unsqueeze(1)
         #x_t[x_t > 0.5] = 1.
         #x_t[x_t <= 0.5] = 0.
-
-        if test:
-            return x_t
 
         original_x = (original_x + 1.) / 2.
         original_x = torch.clamp(original_x, 0., 1.)
@@ -807,16 +806,13 @@ class FlowMS(nn.Module):
             # concatenate the masks
             masks = torch.cat((masks, mask.cpu().long()), dim=0)
             preds = torch.cat((preds, pred.cpu().squeeze(1).long()), dim=0)
-            break
         # preds and masks should be a one-hot boolean tensor of shape N, n_claases, H,W
         preds = F.one_hot(preds.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
         masks = F.one_hot(masks.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
-        miou = MeanIoU(num_classes=self.n_classes)
-        mean_iou = miou(preds,masks)
-        gds = GeneralizedDiceScore(num_classes=self.n_classes)
-        dice_score = gds(preds, masks)
-        print(f'Mean IoU: {mean_iou:.4f}')
-        print(f'Dice Score: {dice_score:.4f}')
+        miou = mean_iou(preds, masks, num_classes=self.n_classes).mean()
+        gds = generalized_dice_score(preds, masks, num_classes=self.n_classes).mean()
+        print(f'Mean IoU: {miou:.4f}')
+        print(f'Dice Score: {gds:.4f}')
         
 
         
