@@ -22,7 +22,8 @@ opencv-python
 tqdm
 einops
 wandb
-zuko
 h5py
 diffusers
 accelerate
+torchmetrics
+torchdiffeq

@@ -80,7 +80,7 @@ class BraTS(Dataset):
             mask = f['mask'][()]
         # resize both to 64x64
         img = cv2.resize(img, (self.size, self.size))
-        mask = cv2.resize(mask, (self.size, self.size))
+        mask = cv2.resize(mask, (self.size, self.size), interpolation=cv2.INTER_NEAREST)
         img = img[:,:,:3]
         # normalize each channel
         if img[:,:,0].max() == 0.0 or img[:,:,1].max() == 0.0 or img[:,:,2].max() == 0.0:
@@ -124,7 +124,7 @@ class CelebAMaskHQ(Dataset):
         mask = np.array(mask)
 
         img = cv2.resize(img, (self.size, self.size))
-        mask = cv2.resize(mask, (self.size, self.size))
+        mask = cv2.resize(mask, (self.size, self.size), interpolation=cv2.INTER_NEAREST)
 
         img = img.astype(np.float32)/255.0
         img = img * 2 - 1
@@ -163,7 +163,7 @@ class CustomCityscapes(Dataset):
         og_target = np.array(og_target)
         
         og_img = cv2.resize(og_img, (self.size*2, self.size))
-        og_target = cv2.resize(og_target, (self.size*2, self.size))
+        og_target = cv2.resize(og_target, (self.size*2, self.size), interpolation=cv2.INTER_NEAREST)
         random_crop = np.random.randint(0, self.size//2)
         img = og_img[:, random_crop:random_crop+self.size].copy()
         target = og_target[:, random_crop:random_crop+self.size].copy()

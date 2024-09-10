@@ -13,6 +13,7 @@ from config import models_dir
 import os
 from torchdiffeq import odeint
 import numpy as np
+from torchmetrics.segmentation import MeanIoU, GeneralizedDiceScore
 
 def exists(x):
     return x is not None
@@ -607,7 +608,7 @@ class FlowMS(nn.Module):
         plt.close(fig)
     
     @torch.no_grad()
-    def segment_image(self, x, n_steps, mask, train=True):
+    def segment_image(self, x, n_steps, mask, train=True, test=False):
         '''
         Segment the image
         :param x: input image
@@ -633,7 +634,7 @@ class FlowMS(nn.Module):
         #x_t = odeint(f, x_t, 1, 0, phi=self.unet.parameters())
 
         else:
-            for i in tqdm(range(n_steps), desc='Segmenting'):
+            for i in tqdm(range(n_steps), desc='Segmenting', leave=not test):
                 x_t = -self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
                 t -= 1./n_steps
         
@@ -647,6 +648,9 @@ class FlowMS(nn.Module):
         #x_t = x_t[:, 0, :, :].unsqueeze(1)
         #x_t[x_t > 0.5] = 1.
         #x_t[x_t <= 0.5] = 0.
+
+        if test:
+            return x_t
 
         original_x = (original_x + 1.) / 2.
         original_x = torch.clamp(original_x, 0., 1.)
@@ -785,6 +789,36 @@ class FlowMS(nn.Module):
         self.sample_from_mask(mask, self.args.n_steps, train=False, shape=x.shape)
         x = x.to(self.device)
         self.segment_image(x, self.args.n_steps, mask, train=False)
+
+    @torch.no_grad()
+    def eval_model(self, test_loader):
+        '''
+        Test the FlowMS model
+        :param test_loader: test loader
+        '''
+        self.unet.eval()
+        # save all the masks in a tensor
+        masks = torch.tensor([])
+        preds = torch.tensor([])
+        for x, mask in tqdm(test_loader, desc='Testing', leave=True):
+            mask = mask.to(self.device)
+            x = x.to(self.device)
+            pred = self.segment_image(x, self.args.n_steps, mask, train=False, test=True)
+            # concatenate the masks
+            masks = torch.cat((masks, mask.cpu().long()), dim=0)
+            preds = torch.cat((preds, pred.cpu().squeeze(1).long()), dim=0)
+            break
+        # preds and masks should be a one-hot boolean tensor of shape N, n_claases, H,W
+        preds = F.one_hot(preds.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
+        masks = F.one_hot(masks.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
+        miou = MeanIoU(num_classes=self.n_classes)
+        mean_iou = miou(preds,masks)
+        gds = GeneralizedDiceScore(num_classes=self.n_classes)
+        dice_score = gds(preds, masks)
+        print(f'Mean IoU: {mean_iou:.4f}')
+        print(f'Dice Score: {dice_score:.4f}')
+        
+
         
 
                 
