@@ -27,3 +27,5 @@ diffusers
 accelerate
 torchmetrics
 torchdiffeq
+streamlit
+streamlit-drawable-canvas

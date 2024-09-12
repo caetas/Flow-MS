@@ -380,71 +380,6 @@ class UNet(nn.Module):
         
         return self.final_conv(x)
 
-#def reparametrize(noise, mu, sigma):
-#    return noise * sigma + mu
-
-def mask_to_gaussian(mask, mean, variance, dist=None, img_shape = None):
-    if img_shape is None:
-        img_shape = mask.shape
-    eps = torch.randn(img_shape)
-    z = reparametrize(mean, variance, eps, dist)
-    z = z.to(mask.device)*mask.unsqueeze(1)
-    return z
-
-def reparametrize(mean, var, eps, dist = None):
-    # make mean the same shape as eps by repeating the mean 1000 times
-    mean = mean[:, None, None]
-    # make var the same shape as eps
-    var = var[:, None, None]
-    if dist is not None:
-        # clip the values of each channel to be within mean - dist and mean + dist
-        return torch.clamp(mean + eps * torch.sqrt(var), min=mean-dist/2 + 1e-6, max=mean+dist/2+1e-6)
-    else:
-        return mean + eps * torch.sqrt(var)
-
-def single_plane(n_classes, dist, z=0):
-    if n_classes == 1:
-        mean = [torch.tensor([0, 0, z])]
-    elif n_classes == 2:
-        mean = [torch.tensor([-dist/2, 0, z]), torch.tensor([dist/2, 0, z])]
-    elif n_classes == 3:
-        mean = [torch.tensor([-dist, 0, z]), torch.tensor([0, 0, z]), torch.tensor([dist, 0, z])]
-    elif n_classes == 4:
-        mean = [torch.tensor([-dist/2, -dist/2, z]), torch.tensor([dist/2, -dist/2, z]), torch.tensor([-dist/2, dist/2, z]), torch.tensor([dist/2, dist/2, z])]
-    elif n_classes == 5:
-        mean = [torch.tensor([-dist, 0, z]), torch.tensor([0, 0, z]), torch.tensor([dist, 0, z]), torch.tensor([0, dist, z]), torch.tensor([0, -dist, z])]
-    elif n_classes == 6:
-        mean = [torch.tensor([-dist/2, -dist, z]), torch.tensor([dist/2, -dist, z]), torch.tensor([-dist/2, 0, z]), torch.tensor([dist/2, 0, z]), torch.tensor([-dist/2, dist, z]), torch.tensor([dist/2, dist, z])]
-    elif n_classes == 7:
-        mean = [torch.tensor([-dist, -dist, z]), torch.tensor([dist, -dist, z]), torch.tensor([-dist, 0, z]), torch.tensor([0, 0, z]), torch.tensor([dist, 0, z]), torch.tensor([-dist, dist, z]), torch.tensor([dist, dist, z])]
-    elif n_classes == 8:
-        mean = [torch.tensor([-dist, -dist, z]), torch.tensor([0, -dist, z]), torch.tensor([dist, -dist, z]), torch.tensor([-dist, 0, z]), torch.tensor([dist, 0, z]), torch.tensor([-dist, dist, z]), torch.tensor([0, dist, z]), torch.tensor([dist, dist, z])]
-    else:
-        mean = [torch.tensor([-dist, -dist, z]), torch.tensor([0, -dist, z]), torch.tensor([dist, -dist, z]), torch.tensor([-dist, 0, z]), torch.tensor([0, 0, z]), torch.tensor([dist, 0, z]), torch.tensor([-dist, dist, z]), torch.tensor([0, dist, z]), torch.tensor([dist, dist, z])]
-    return mean
-
-def class_to_gaussian(n_classes, dist=2.5, variance = 0.5):
-    assert n_classes <= 27, "Only 27 classes are supported"
-    assert n_classes > 1, "At least 2 classes are needed"
-    mean = []
-    if n_classes <= 3:
-        var = torch.tensor([variance, 1, 1]) # only need to use 1 channel
-        mean = single_plane(n_classes, dist)
-    elif n_classes <= 9:
-        var = torch.tensor([variance, variance, 1]) # need 2 channels only
-        mean = single_plane(n_classes, dist)
-    else:
-        if n_classes <= 18:
-            var = torch.tensor([variance, variance, variance])
-            mean = single_plane(9, dist, -dist/2)
-            mean.extend(single_plane(n_classes-9, dist, dist/2))
-        else:
-            var = torch.tensor([variance, variance, variance])
-            mean = single_plane(9, dist, -dist)
-            mean.extend(single_plane(9, dist, 0))
-            mean.extend(single_plane(n_classes-18, dist, dist))
-    return mean, var
-
 def gaussian_to_class(mean, map):
     class_dist = []
     for m in mean:
@@ -475,10 +410,12 @@ class FlowMS(nn.Module):
         super(FlowMS, self).__init__()
         self.args = args
         self.channels = channels
+        self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels))
+        self.var = torch.nn.Parameter(torch.randn(args.n_classes, channels))
+        self.prior = [torch.distributions.Normal(self.mu[i], torch.exp(self.var[i])) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.unet.to(self.device)
-        self.mean, self.var = class_to_gaussian(args.n_classes, dist = args.dist, variance=args.var)
         self.n_classes = args.n_classes
         self.dataset = args.dataset
         self.warmup = args.warmup
@@ -511,15 +448,22 @@ class FlowMS(nn.Module):
         for i in range(self.n_classes):
             inst_mask = (mask == i).float()
             if i == 0:
-                noise = mask_to_gaussian(inst_mask, self.mean[i], self.var, self.dist, x.shape)
+                noise = self.mask_to_gaussian(i, inst_mask, x.shape)
             else:
-                noise += mask_to_gaussian(inst_mask, self.mean[i], self.var, self.dist, x.shape)
+                noise += self.mask_to_gaussian(i, inst_mask, x.shape)
 
         x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
         optimal_flow = x - (1 - sigma_min) * noise
         predicted_flow = self.unet(x_t, t)
 
         return (predicted_flow - optimal_flow).square().mean()
+    
+    def mask_to_gaussian(self, index, mask, img_shape = None):
+        if img_shape is None:
+            img_shape = mask.shape
+        z = self.prior[index].sample((img_shape[0],img_shape[2],img_shape[3])).permute(0,3,1,2)
+        z = z.to(mask.device)*mask.unsqueeze(1)
+        return z
     
     @torch.no_grad()
     def sample_from_mask(self, mask, n_steps, train=True, shape = None):
@@ -528,9 +472,9 @@ class FlowMS(nn.Module):
         for i in range(self.n_classes):
             inst_mask = (mask == i).float()
             if i == 0:
-                noise = mask_to_gaussian(inst_mask, self.mean[i], self.var, self.dist, shape)
+                noise = self.mask_to_gaussian(i, inst_mask, shape)
             else:
-                noise += mask_to_gaussian(inst_mask, self.mean[i], self.var, self.dist, shape)
+                noise += self.mask_to_gaussian(i, inst_mask, shape)
         x_t = noise
         t = 0.
 
@@ -638,7 +582,7 @@ class FlowMS(nn.Module):
                 x_t = -self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
                 t -= 1./n_steps
         
-        x_t = gaussian_to_class(self.mean, x_t.cpu())
+        x_t = gaussian_to_class(self.mu, x_t.cpu())
         if test:
             return x_t
         # normalize x_t to [0, 1]
@@ -753,6 +697,7 @@ class FlowMS(nn.Module):
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
+
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
             wandb.log({"loss": epoch_loss})
