@@ -849,7 +849,7 @@ class FlowMS(nn.Module):
         ax.set_zlabel('Channel B')
         # push legend out of the plot, to the top
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.1), ncol=min(6, self.n_classes))
-        wandb.log({"gaussians": fig})
+        wandb.log({"gaussians": wandb.Image(fig)})
         plt.close(fig)
             
         
