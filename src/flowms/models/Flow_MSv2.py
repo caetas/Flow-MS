@@ -384,9 +384,9 @@ def gaussian_to_class(mean, map):
     class_dist = []
     for m in mean:
         if len(map.shape) > 2:
-            dist = abs(map - m[:, None, None])
+            dist = abs(map - m[:, None, None].to(map.device))
         else:
-            dist = abs(map - m[:, None])
+            dist = abs(map - m[:, None].to(map.device))
         class_dist.append(torch.mean(dist, axis=1))
     class_dist = torch.stack(class_dist)
     class_map = torch.argmin(class_dist, axis=0).unsqueeze(1)
@@ -410,11 +410,11 @@ class FlowMS(nn.Module):
         super(FlowMS, self).__init__()
         self.args = args
         self.channels = channels
-        self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels), requires_grad=True)
-        self.var = torch.nn.Parameter(torch.randn(args.n_classes, channels), requires_grad=True)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
+        self.var = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
         self.prior = [torch.distributions.Normal(self.mu[i], torch.exp(self.var[i])) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.unet.to(self.device)
         self.n_classes = args.n_classes
         self.dataset = args.dataset
@@ -455,8 +455,18 @@ class FlowMS(nn.Module):
         x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
         optimal_flow = x - (1 - sigma_min) * noise
         predicted_flow = self.unet(x_t, t)
+        predicted_noise = x_t - predicted_flow*t[:, None, None, None]
 
-        return (predicted_flow - optimal_flow).square().mean()
+        bce = nn.BCELoss()
+        labels = F.one_hot(mask.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
+        labels = labels.float()
+        preds = torch.zeros_like(labels)
+        for i in range(self.n_classes):
+            log_likelihood = self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)).mean(dim=-1)
+            preds[:, i, :, :] = torch.exp(log_likelihood).clamp(1e-7, 1-1e-7)
+        loss = bce(preds, labels)
+
+        return (predicted_flow - optimal_flow).square().mean() + loss
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -705,7 +715,7 @@ class FlowMS(nn.Module):
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
-                torch.save(self.unet.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}.pt'))
+                torch.save(self.unet.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_mod.pt'))
 
     def load_model(self, model_path):
         '''
