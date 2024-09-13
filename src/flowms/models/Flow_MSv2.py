@@ -713,6 +713,7 @@ class FlowMS(nn.Module):
                 self.sample_from_mask(mask, self.args.n_steps, shape=x.shape)
                 x = x.to(self.device)
                 self.segment_image(x, self.args.n_steps, mask)
+                self.draw_gaussians()
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
@@ -831,6 +832,26 @@ class FlowMS(nn.Module):
         
         x_t = x_t*0.5 + 0.5
         return x_t
+    
+    @torch.no_grad()
+    def draw_gaussians(self):
+        '''
+        Plot the gaussians that represent the classes
+        '''
+        #3d plot
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        for i in range(self.n_classes):
+            samples = self.prior[i].sample((1000,)).cpu().numpy()
+            ax.scatter(samples[:, 0], samples[:, 1], samples[:, 2], label=f'Class {i}', color=self.colors[i]/255.)
+        ax.set_xlabel('Channel R')
+        ax.set_ylabel('Channel G')
+        ax.set_zlabel('Channel B')
+        # push legend out of the plot, to the top
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.1), ncol=min(6, self.n_classes))
+        wandb.log({"gaussians": fig})
+        plt.close(fig)
+            
         
         
 
