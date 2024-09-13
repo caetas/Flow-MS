@@ -410,8 +410,8 @@ class FlowMS(nn.Module):
         super(FlowMS, self).__init__()
         self.args = args
         self.channels = channels
-        self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels))
-        self.var = torch.nn.Parameter(torch.randn(args.n_classes, channels))
+        self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels), requires_grad=True)
+        self.var = torch.nn.Parameter(torch.randn(args.n_classes, channels), requires_grad=True)
         self.prior = [torch.distributions.Normal(self.mu[i], torch.exp(self.var[i])) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -461,7 +461,7 @@ class FlowMS(nn.Module):
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
             img_shape = mask.shape
-        z = self.prior[index].sample((img_shape[0],img_shape[2],img_shape[3])).permute(0,3,1,2)
+        z = self.prior[index].rsample((img_shape[0],img_shape[2],img_shape[3])).permute(0,3,1,2)
         z = z.to(mask.device)*mask.unsqueeze(1)
         return z
     
@@ -587,13 +587,6 @@ class FlowMS(nn.Module):
             return x_t
         # normalize x_t to [0, 1]
         x_t = x_t/float(self.n_classes-1)
-        #x_t = (x_t + 1.) / 2.
-        #x_t = torch.clamp(x_t, 0., 1.)
-        # average the channels
-        #x_t = x_t.mean(dim=1, keepdim=True)
-        #x_t = x_t[:, 0, :, :].unsqueeze(1)
-        #x_t[x_t > 0.5] = 1.
-        #x_t[x_t <= 0.5] = 0.
 
         original_x = (original_x + 1.) / 2.
         original_x = torch.clamp(original_x, 0., 1.)
@@ -694,7 +687,7 @@ class FlowMS(nn.Module):
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
                 loss = self.conditional_flow_matching_loss(x, mask)
-                loss.backward()
+                loss.backward(retain_graph=True)
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
 
