@@ -400,6 +400,27 @@ def create_checkpoint_dir():
     if not os.path.exists(os.path.join(models_dir, 'FlowMS')):
         os.makedirs(os.path.join(models_dir, 'FlowMS'))
 
+def initial_means(n_classes, dist=2):
+    N = n_classes  # for example, 1000 points
+
+    # Find the cube root of N to determine how many points per axis
+    side_points = round(N ** (1/3))
+
+    # Adjust N to be a perfect cube of side_points
+    N_actual = side_points ** 3
+
+    # Generate a grid with evenly spaced points along each axis
+    linspace = torch.linspace(-dist, dist, side_points)
+    x, y, z = torch.meshgrid(linspace, linspace, linspace)
+
+    # Stack the grid coordinates and reshape them into N_actual x 3 shape
+    points = torch.stack([x, y, z], dim=-1).reshape(-1, 3)
+
+    # Trim the grid to the original N points, in case N is not a perfect cube
+    points = points[:N]
+
+    return points.float()
+
 class FlowMS(nn.Module):
 
     def __init__(self, args, channels=3):
@@ -411,7 +432,8 @@ class FlowMS(nn.Module):
         self.args = args
         self.channels = channels
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
+        self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=True)
+        #self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
         self.var = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
         self.prior = [torch.distributions.Normal(self.mu[i], torch.exp(self.var[i])) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
@@ -457,25 +479,28 @@ class FlowMS(nn.Module):
         predicted_flow = self.unet(x_t, t)
         predicted_noise = x_t - predicted_flow*t[:, None, None, None]
 
-        bce = nn.CrossEntropyLoss()
+        bce = nn.BCELoss()
         labels = F.one_hot(mask.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
         labels = labels.float()
         preds = torch.zeros_like(labels)
+
         for i in range(self.n_classes):
-            peak_factor = 1.0#/((2*math.pi)**0.5*torch.exp(self.var[i])) # peak is normalized to 1
+            peak_factor = 1.0/((2*math.pi)**0.5*torch.exp(self.var[i])) # peak is normalized to 1
             log_likelihood = (self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)))
             preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1)
         cross_entropy = bce(preds, labels)
 
         cnt = 0
         # kl divergence
-        for i in range(self.n_classes-1):
-            for j in range(i+1, self.n_classes):
-                if i == 0 and j == 1:
-                    kl_loss = torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
-                else:
-                    kl_loss += torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
-                cnt += 1
+        for i in range(self.n_classes):
+            for j in range(self.n_classes):
+                if i!=j:
+                    if i == 0 and j == 1:
+                        kl_loss = torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
+                    else:
+                        kl_loss += torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
+                    cnt += 1
+                    
         kl_loss = kl_loss/cnt
         kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
 
