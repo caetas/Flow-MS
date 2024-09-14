@@ -462,7 +462,7 @@ class FlowMS(nn.Module):
         labels = labels.float()
         preds = torch.zeros_like(labels)
         for i in range(self.n_classes):
-            peak_factor = 1.0/((2*math.pi)**0.5*torch.exp(self.var[i])) # peak is normalized to 1
+            peak_factor = 1.0#/((2*math.pi)**0.5*torch.exp(self.var[i])) # peak is normalized to 1
             log_likelihood = (self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)))
             preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1)
         cross_entropy = bce(preds, labels)
@@ -720,7 +720,6 @@ class FlowMS(nn.Module):
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
                 epoch_loss_ce += ce_loss.item()*x.shape[0]
                 epoch_loss_kl += kl_loss.item()*x.shape[0]
-                break
 
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
