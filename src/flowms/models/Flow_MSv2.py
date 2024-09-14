@@ -490,6 +490,8 @@ class FlowMS(nn.Module):
             preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1)
         cross_entropy = bce(preds, labels)
 
+        kl_loss = 0
+        '''
         cnt = 0
         # kl divergence
         for i in range(self.n_classes):
@@ -503,6 +505,7 @@ class FlowMS(nn.Module):
 
         kl_loss = kl_loss/cnt
         kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
+        '''
 
         return (predicted_flow - optimal_flow).square().mean(), cross_entropy, kl_loss
     
@@ -751,7 +754,7 @@ class FlowMS(nn.Module):
             wandb.log({"loss": epoch_loss})
             wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
             wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
-            wandb.log({"kl_loss": epoch_loss_kl/len(dataloader.dataset)})
+            #wandb.log({"kl_loss": epoch_loss_kl/len(dataloader.dataset)})
             scheduler.step()
 
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
