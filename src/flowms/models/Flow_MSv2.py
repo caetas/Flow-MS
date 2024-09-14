@@ -740,8 +740,8 @@ class FlowMS(nn.Module):
                 x = x.to(self.device)
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
-                recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
-                loss = recon_loss + ce_loss + kl_loss
+                recon_loss, ce_loss, _ = self.conditional_flow_matching_loss(x, mask)
+                loss = recon_loss + ce_loss
                 loss.backward(retain_graph=True)
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
