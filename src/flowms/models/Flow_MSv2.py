@@ -400,7 +400,7 @@ def create_checkpoint_dir():
     if not os.path.exists(os.path.join(models_dir, 'FlowMS')):
         os.makedirs(os.path.join(models_dir, 'FlowMS'))
 
-def initial_means(n_classes, dist=2):
+def initial_means(n_classes, dist=3):
     N = n_classes  # for example, 1000 points
 
     # Find the cube root of N to determine how many points per axis
