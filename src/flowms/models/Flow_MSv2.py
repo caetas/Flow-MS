@@ -457,17 +457,29 @@ class FlowMS(nn.Module):
         predicted_flow = self.unet(x_t, t)
         predicted_noise = x_t - predicted_flow*t[:, None, None, None]
 
-        bce = nn.BCELoss()
+        bce = nn.CrossEntropyLoss()
         labels = F.one_hot(mask.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
         labels = labels.float()
         preds = torch.zeros_like(labels)
         for i in range(self.n_classes):
             peak_factor = 1.0/((2*math.pi)**0.5*torch.exp(self.var[i])) # peak is normalized to 1
             log_likelihood = (self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)))
-            preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1).clamp(1e-7, 1-1e-7)
-        loss = bce(preds, labels)
+            preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1)
+        cross_entropy = bce(preds, labels)
 
-        return (predicted_flow - optimal_flow).square().mean() + loss
+        cnt = 0
+        # kl divergence
+        for i in range(self.n_classes-1):
+            for j in range(i+1, self.n_classes):
+                if i == 0 and j == 1:
+                    kl_loss = torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
+                else:
+                    kl_loss += torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
+                cnt += 1
+        kl_loss = kl_loss/cnt
+        kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
+
+        return (predicted_flow - optimal_flow).square().mean(), cross_entropy, kl_loss
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -691,20 +703,31 @@ class FlowMS(nn.Module):
 
         best_loss = float('inf')
         for epoch in epoch_bar:
+            epoch_loss_rec = 0.
+            epoch_loss_ce = 0.
+            epoch_loss_kl = 0.
             epoch_loss = 0.
             self.unet.train()
             for x, mask in tqdm(dataloader, desc='Batches', leave=False):
                 x = x.to(self.device)
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
-                loss = self.conditional_flow_matching_loss(x, mask)
+                recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
+                loss = recon_loss + ce_loss + kl_loss
                 loss.backward(retain_graph=True)
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
+                epoch_loss_rec += recon_loss.item()*x.shape[0]
+                epoch_loss_ce += ce_loss.item()*x.shape[0]
+                epoch_loss_kl += kl_loss.item()*x.shape[0]
+                break
 
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
             wandb.log({"loss": epoch_loss})
+            wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
+            wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
+            wandb.log({"kl_loss": epoch_loss_kl/len(dataloader.dataset)})
             scheduler.step()
 
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
