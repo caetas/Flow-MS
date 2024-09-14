@@ -400,7 +400,7 @@ def create_checkpoint_dir():
     if not os.path.exists(os.path.join(models_dir, 'FlowMS')):
         os.makedirs(os.path.join(models_dir, 'FlowMS'))
 
-def initial_means(n_classes, dist=1):
+def initial_means(n_classes, dist=3.0):
     N = n_classes  # for example, 1000 points
 
     # Find the cube root of N to determine how many points per axis
@@ -491,8 +491,6 @@ class FlowMS(nn.Module):
         preds[preds!=preds] = 0 # solve nans
         cross_entropy = bce(preds, labels)
 
-        kl_loss = 0
-        '''
         cnt = 0
         # kl divergence
         for i in range(self.n_classes):
@@ -506,9 +504,8 @@ class FlowMS(nn.Module):
 
         kl_loss = kl_loss/cnt
         kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
-        '''
 
-        return (predicted_flow - optimal_flow).square().mean(), cross_entropy
+        return (predicted_flow - optimal_flow).square().mean(), cross_entropy, kl_loss
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -741,14 +738,14 @@ class FlowMS(nn.Module):
                 x = x.to(self.device)
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
-                recon_loss, ce_loss = self.conditional_flow_matching_loss(x, mask)
-                loss = recon_loss + ce_loss
+                recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
+                loss = recon_loss + ce_loss + kl_loss
                 loss.backward(retain_graph=True)
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
                 epoch_loss_ce += ce_loss.item()*x.shape[0]
-                #epoch_loss_kl += kl_loss.item()*x.shape[0]
+                epoch_loss_kl += kl_loss.item()*x.shape[0]
 
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
