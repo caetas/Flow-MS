@@ -739,7 +739,10 @@ class FlowMS(nn.Module):
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
                 recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
-                loss = recon_loss + ce_loss + kl_loss
+                if (epoch+1) < self.warmup:
+                    loss = recon_loss + ce_loss + kl_loss
+                else:
+                    loss = recon_loss
                 loss.backward(retain_graph=True)
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
@@ -750,9 +753,9 @@ class FlowMS(nn.Module):
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
             wandb.log({"loss": epoch_loss})
-            wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
-            wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
-            wandb.log({"kl_loss": epoch_loss_kl/len(dataloader.dataset)})
+            #wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
+            #wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
+            #wandb.log({"kl_loss": epoch_loss_kl/len(dataloader.dataset)})
             scheduler.step()
 
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
@@ -762,6 +765,11 @@ class FlowMS(nn.Module):
                 x = x.to(self.device)
                 self.segment_image(x, self.args.n_steps, mask)
                 self.draw_gaussians()
+            
+            if (epoch+1) == self.warmup:
+                # disable gradient in the means and variances
+                self.mu.requires_grad = False
+                self.var.requires_grad = False
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
