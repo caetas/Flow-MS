@@ -400,7 +400,7 @@ def create_checkpoint_dir():
     if not os.path.exists(os.path.join(models_dir, 'FlowMS')):
         os.makedirs(os.path.join(models_dir, 'FlowMS'))
 
-def initial_means(n_classes, dist=3):
+def initial_means(n_classes, dist=1):
     N = n_classes  # for example, 1000 points
 
     # Find the cube root of N to determine how many points per axis
@@ -488,7 +488,7 @@ class FlowMS(nn.Module):
             peak_factor = 1.0/((2*math.pi)**0.5*self.var[i]) # peak is normalized to 1
             log_likelihood = (self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)))
             preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1).clamp(1e-7, 1-1e-7)
-        preds[preds!=preds] = 0
+        preds[preds!=preds] = 0 # solve nans
         cross_entropy = bce(preds, labels)
 
         kl_loss = 0
