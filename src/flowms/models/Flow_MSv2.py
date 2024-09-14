@@ -747,7 +747,7 @@ class FlowMS(nn.Module):
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
                 epoch_loss_ce += ce_loss.item()*x.shape[0]
-                epoch_loss_kl += kl_loss.item()*x.shape[0]
+                #epoch_loss_kl += kl_loss.item()*x.shape[0]
 
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
