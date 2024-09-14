@@ -434,7 +434,7 @@ class FlowMS(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=True)
         #self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
-        self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).to(self.device), requires_grad=True)
+        self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.25,1.0).to(self.device), requires_grad=True)
         self.prior = [torch.distributions.Normal(self.mu[i], self.var[i]) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.unet.to(self.device)
