@@ -739,11 +739,12 @@ class FlowMS(nn.Module):
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
                 recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
-                if (epoch+1) < self.warmup:
+                if (epoch+1) <= self.warmup:
                     loss = recon_loss + ce_loss + kl_loss
+                    loss.backward(retain_graph=True)
                 else:
                     loss = recon_loss
-                loss.backward(retain_graph=True)
+                    loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
@@ -770,6 +771,7 @@ class FlowMS(nn.Module):
                 # disable gradient in the means and variances
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
+                dataloader.batch_size *= 2
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
