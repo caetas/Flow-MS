@@ -750,9 +750,9 @@ class FlowMS(nn.Module):
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
             wandb.log({"loss": epoch_loss})
-            wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)}, step=epoch)
-            wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)}, step=epoch)
-            wandb.log({"kl_loss": epoch_loss_kl/len(dataloader.dataset)}, step=epoch)
+            wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
+            wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
+            wandb.log({"kl_loss": epoch_loss_kl/len(dataloader.dataset)})
             scheduler.step()
 
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
