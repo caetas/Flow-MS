@@ -434,8 +434,8 @@ class FlowMS(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=True)
         #self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
-        self.var = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
-        self.prior = [torch.distributions.Normal(self.mu[i], torch.exp(self.var[i])) for i in range(args.n_classes)]
+        self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).to(self.device), requires_grad=True)
+        self.prior = [torch.distributions.Normal(self.mu[i], self.var[i]) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.unet.to(self.device)
         self.n_classes = args.n_classes
@@ -485,7 +485,7 @@ class FlowMS(nn.Module):
         preds = torch.zeros_like(labels)
 
         for i in range(self.n_classes):
-            peak_factor = 1.0/((2*math.pi)**0.5*torch.exp(self.var[i])) # peak is normalized to 1
+            peak_factor = 1.0/((2*math.pi)**0.5*self.var[i]) # peak is normalized to 1
             log_likelihood = (self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)))
             preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1)
         cross_entropy = bce(preds, labels)
@@ -500,7 +500,7 @@ class FlowMS(nn.Module):
                     else:
                         kl_loss += torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
                     cnt += 1
-                    
+
         kl_loss = kl_loss/cnt
         kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
 
