@@ -487,7 +487,7 @@ class FlowMS(nn.Module):
         for i in range(self.n_classes):
             peak_factor = 1.0/((2*math.pi)**0.5*self.var[i]) # peak is normalized to 1
             log_likelihood = (self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)))
-            preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1)
+            preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1).clamp(1e-7, 1-1e-7)
         cross_entropy = bce(preds, labels)
 
         kl_loss = 0
@@ -507,7 +507,7 @@ class FlowMS(nn.Module):
         kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
         '''
 
-        return (predicted_flow - optimal_flow).square().mean(), cross_entropy, kl_loss
+        return (predicted_flow - optimal_flow).square().mean(), cross_entropy
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -740,7 +740,7 @@ class FlowMS(nn.Module):
                 x = x.to(self.device)
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
-                recon_loss, ce_loss, _ = self.conditional_flow_matching_loss(x, mask)
+                recon_loss, ce_loss = self.conditional_flow_matching_loss(x, mask)
                 loss = recon_loss + ce_loss
                 loss.backward(retain_graph=True)
                 optimizer.step()
