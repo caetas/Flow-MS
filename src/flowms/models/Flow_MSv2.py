@@ -482,8 +482,12 @@ class FlowMS(nn.Module):
         bce = nn.BCELoss()
         labels = F.one_hot(mask.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
         labels = labels.float()
-        preds = torch.zeros_like(labels)
+        preds = gaussian_to_class(self.mu, predicted_noise)
+        preds = F.one_hot(preds.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
+        preds = preds.float()
+        cross_entropy = bce(preds, labels)
 
+        '''
         for i in range(self.n_classes):
             peak_factor = 0.2 #1.0#/((2*math.pi)**0.5*self.var[i]) # peak is normalized to 1
             log_likelihood = (self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)))
@@ -504,8 +508,8 @@ class FlowMS(nn.Module):
 
         kl_loss = kl_loss/cnt
         kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
-
-        return (predicted_flow - optimal_flow).square().mean(), cross_entropy, kl_loss
+        '''
+        return (predicted_flow - optimal_flow).square().mean(), cross_entropy
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -738,12 +742,12 @@ class FlowMS(nn.Module):
                 x = x.to(self.device)
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
-                recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
+                recon_loss, ce_loss = self.conditional_flow_matching_loss(x, mask)
                 if (epoch+1) <= self.warmup:
-                    loss = recon_loss #+ 0.1*(ce_loss + kl_loss)
+                    loss = recon_loss + ce_loss
                     loss.backward(retain_graph=True)
                 else:
-                    loss = recon_loss #+ 0.02*(ce_loss + kl_loss)
+                    loss = recon_loss + ce_loss
                     loss.backward(retain_graph=True)
                     #loss = recon_loss
                     #loss.backward()
@@ -751,13 +755,13 @@ class FlowMS(nn.Module):
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
                 epoch_loss_ce += ce_loss.item()*x.shape[0]
-                epoch_loss_kl += kl_loss.item()*x.shape[0]
+                #epoch_loss_kl += kl_loss.item()*x.shape[0]
 
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
             wandb.log({"loss": epoch_loss})
-            #wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
-            #wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
+            wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
+            wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
             #wandb.log({"kl_loss": epoch_loss_kl/len(dataloader.dataset)})
             scheduler.step()
 
@@ -771,6 +775,7 @@ class FlowMS(nn.Module):
             
             if (epoch+1) == self.warmup:
                 # disable gradient in the means and variances
+                continue
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
                 #dataloader.batch_size *= 2
