@@ -775,7 +775,6 @@ class FlowMS(nn.Module):
             
             if (epoch+1) == self.warmup:
                 # disable gradient in the means and variances
-                continue
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
                 #dataloader.batch_size *= 2
