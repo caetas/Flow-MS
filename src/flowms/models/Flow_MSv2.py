@@ -744,7 +744,7 @@ class FlowMS(nn.Module):
                 optimizer.zero_grad()
                 recon_loss, ce_loss = self.conditional_flow_matching_loss(x, mask)
                 if (epoch+1) <= self.warmup:
-                    loss = recon_loss + 0.005*ce_loss
+                    loss = recon_loss + 0.01*ce_loss
                     loss.backward(retain_graph=True)
                 else:
                     loss = recon_loss + 0.001*ce_loss
