@@ -750,6 +750,8 @@ class FlowMS(nn.Module):
                     loss = recon_loss + 0.001*ce_loss
                     loss.backward(retain_graph=True)
                 optimizer.step()
+                # clamp the variances for stability
+                self.var.data = torch.clamp(self.var.data, 0.05, 1.0)
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
                 epoch_loss_ce += ce_loss.item()*x.shape[0]
