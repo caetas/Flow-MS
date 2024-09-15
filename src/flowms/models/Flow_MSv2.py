@@ -740,10 +740,10 @@ class FlowMS(nn.Module):
                 optimizer.zero_grad()
                 recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
                 if (epoch+1) <= self.warmup:
-                    loss = recon_loss + 0.1*(ce_loss + kl_loss)
+                    loss = recon_loss #+ 0.1*(ce_loss + kl_loss)
                     loss.backward(retain_graph=True)
                 else:
-                    loss = recon_loss + 0.02*(ce_loss + kl_loss)
+                    loss = recon_loss #+ 0.02*(ce_loss + kl_loss)
                     loss.backward(retain_graph=True)
                     #loss = recon_loss
                     #loss.backward()
@@ -771,10 +771,9 @@ class FlowMS(nn.Module):
             
             if (epoch+1) == self.warmup:
                 # disable gradient in the means and variances
-                continue
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
-                dataloader.batch_size *= 2
+                #dataloader.batch_size *= 2
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
