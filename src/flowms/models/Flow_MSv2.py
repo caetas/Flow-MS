@@ -743,12 +743,12 @@ class FlowMS(nn.Module):
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
                 recon_loss, ce_loss = self.conditional_flow_matching_loss(x, mask)
-                if (epoch+1) <= self.warmup:
-                    loss = recon_loss + 0.2*ce_loss
-                    loss.backward(retain_graph=True)
-                else:
-                    loss = recon_loss + 0.1*ce_loss
-                    loss.backward(retain_graph=True)
+                #if (epoch+1) <= self.warmup:
+                #    loss = recon_loss + 0.2*ce_loss
+                #    loss.backward(retain_graph=True)
+                #else:
+                loss = recon_loss + 0.3*(1-epoch/self.args.n_epochs)*ce_loss
+                loss.backward(retain_graph=True)
                 optimizer.step()
                 # clamp the variances for stability
                 self.var.data = torch.clamp(self.var.data, 0.05, 2.0)
@@ -773,7 +773,7 @@ class FlowMS(nn.Module):
                 self.segment_image(x, self.args.n_steps, mask)
                 self.draw_gaussians()
             
-            if (epoch+1) == self.warmup:
+            if (epoch+1) == int(1.5*self.warmup):
                 # disable gradient in the means and variances
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
