@@ -483,7 +483,6 @@ class FlowMS(nn.Module):
         labels = F.one_hot(mask.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
         labels = labels.float()
         preds = gaussian_to_class(self.mu, predicted_noise).squeeze(1)
-        print(preds.shape, labels.shape)
         preds = F.one_hot(preds.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
         preds = preds.float()
         cross_entropy = bce(preds, labels)
