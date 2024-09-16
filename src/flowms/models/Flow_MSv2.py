@@ -432,9 +432,8 @@ class FlowMS(nn.Module):
         self.args = args
         self.channels = channels
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=True)
-        #self.mu = torch.nn.Parameter(torch.randn(args.n_classes, channels).to(self.device), requires_grad=True)
-        self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.5,1.0).to(self.device), requires_grad=True)
+        self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=not args.anchor)
+        self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.25,0.75).to(self.device), requires_grad=True)
         self.prior = [torch.distributions.Normal(self.mu[i], self.var[i]) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.unet.to(self.device)
@@ -445,6 +444,8 @@ class FlowMS(nn.Module):
         self.ode = args.ode
         self.solver = args.solver
         self.clip = args.clip
+        self.w_bce = args.w_bce
+        self.tolerance = args.tolerance
         if self.clip:
             self.dist = args.clip_dist
         else:
@@ -487,14 +488,6 @@ class FlowMS(nn.Module):
         preds = preds.float()
         cross_entropy = bce(preds, labels)
 
-        '''
-        for i in range(self.n_classes):
-            peak_factor = 0.2 #1.0#/((2*math.pi)**0.5*self.var[i]) # peak is normalized to 1
-            log_likelihood = (self.prior[i].log_prob(predicted_noise.permute(0,2,3,1)))
-            preds[:, i, :, :] = (torch.exp(log_likelihood)/peak_factor).mean(dim=-1).clamp(1e-7, 1-1e-7)
-        preds[preds!=preds] = 0 # solve nans
-        cross_entropy = bce(preds, labels)
-
         cnt = 0
         # kl divergence
         for i in range(self.n_classes):
@@ -508,8 +501,8 @@ class FlowMS(nn.Module):
 
         kl_loss = kl_loss/cnt
         kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
-        '''
-        return (predicted_flow - optimal_flow).square().mean(), cross_entropy
+        
+        return (predicted_flow - optimal_flow).square().mean(), cross_entropy, kl_loss
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -742,20 +735,15 @@ class FlowMS(nn.Module):
                 x = x.to(self.device)
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
-                recon_loss, ce_loss = self.conditional_flow_matching_loss(x, mask)
-                #if (epoch+1) <= self.warmup:
-                #    loss = recon_loss + 0.2*ce_loss
-                #    loss.backward(retain_graph=True)
-                #else:
-                loss = recon_loss + 0.2*(1-epoch/self.args.n_epochs)*ce_loss
+                recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
+                
+                loss = recon_loss + self.w_bce*ce_loss
                 loss.backward(retain_graph=True)
                 optimizer.step()
-                # clamp the variances for stability
-                #self.var.data = torch.clamp(self.var.data, 0.05, 2.0)
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
                 epoch_loss_ce += ce_loss.item()*x.shape[0]
-                #epoch_loss_kl += kl_loss.item()*x.shape[0]
+                epoch_loss_kl += kl_loss.item()*x.shape[0]
 
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
@@ -773,8 +761,8 @@ class FlowMS(nn.Module):
                 self.segment_image(x, self.args.n_steps, mask)
                 self.draw_gaussians()
             
-            if (epoch+1) == self.warmup:
-                # disable gradient in the means and variances
+            if epoch_loss_kl/len(dataloader.dataset) < self.tolerance:
+                # disable gradient in the means and variances if the distributions are already far apart
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
                 #dataloader.batch_size *= 2
@@ -788,7 +776,7 @@ class FlowMS(nn.Module):
         Load the FlowMS model
         :param model_path: path to the model
         '''
-        self.unet.load_state_dict(torch.load(model_path))
+        self.load_state_dict(torch.load(model_path))
         self.unet.eval()
 
     def sample(self, test_loader):

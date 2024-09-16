@@ -28,6 +28,9 @@ def parse_args():
     argparser.add_argument('--clip', action='store_true', default=False, help='clip the gaussians')
     argparser.add_argument('--clip_dist', type=float, default=3.0, help='length of the cube')
     argparser.add_argument('--num_workers', type=int, default=0, help='number of workers')
+    argparser.add_argument('--w_bce', type=float, default=0.2, help='weight for binary cross entropy')
+    argparser.add_argument('--tolerance', type=float, default=1e-3, help='minimum tolerance for training the gaussians')
+    argparser.add_argument('--anchor', action='store_true', default=False, help='anchor the mean of the gaussians during training')
     args = argparser.parse_args()
     args.channel_scale_factors = tuple(args.channel_scale_factors)
     return args
