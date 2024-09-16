@@ -400,7 +400,7 @@ def create_checkpoint_dir():
     if not os.path.exists(os.path.join(models_dir, 'FlowMS')):
         os.makedirs(os.path.join(models_dir, 'FlowMS'))
 
-def initial_means(n_classes, dist=3.0):
+def initial_means(n_classes, dist=4.0):
     N = n_classes  # for example, 1000 points
 
     # Find the cube root of N to determine how many points per axis
@@ -432,8 +432,10 @@ class FlowMS(nn.Module):
         self.args = args
         self.channels = channels
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=not args.anchor)
-        self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.25,0.75).to(self.device), requires_grad=True)
+        #self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=not args.anchor)
+        #self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.25,0.75).to(self.device), requires_grad=True)
+        self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=False)
+        self.var = torch.nn.Parameter(0.3*torch.ones(args.n_classes, channels).to(self.device), requires_grad=False)
         self.prior = [torch.distributions.Normal(self.mu[i], self.var[i]) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.unet.to(self.device)
@@ -738,7 +740,8 @@ class FlowMS(nn.Module):
                 recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
                 
                 loss = recon_loss + self.w_bce*ce_loss
-                loss.backward(retain_graph=True)
+                #loss.backward(retain_graph=True)
+                loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
