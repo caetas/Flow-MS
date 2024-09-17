@@ -444,7 +444,7 @@ class FlowMS(nn.Module):
         self.ode = args.ode
         self.solver = args.solver
         self.clip = args.clip
-        self.w_bce = args.w_bce
+        self.w_seg = args.w_seg
         self.tolerance = args.tolerance
         if self.clip:
             self.dist = args.clip_dist
@@ -462,32 +462,22 @@ class FlowMS(nn.Module):
         :param time: time embedding
         '''
         return self.unet(x, time)
-    
-    def conditional_flow_matching_loss(self, x, mask):
-        sigma_min = 1e-4
-        t = torch.rand(x.shape[0], device=x.device)
-        #noise = torch.randn_like(x)
-        #noise = (mask>0.).float() * reparametrize(noise, 2, 0.75) + (mask<=0.).float() * reparametrize(noise, -2, 0.75)
-        for i in range(self.n_classes):
-            inst_mask = (mask == i).float()
-            if i == 0:
-                noise = self.mask_to_gaussian(i, inst_mask, x.shape)
-            else:
-                noise += self.mask_to_gaussian(i, inst_mask, x.shape)
 
-        x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
-        optimal_flow = x - (1 - sigma_min) * noise
-        predicted_flow = self.unet(x_t, t)
-        predicted_noise = x_t - predicted_flow*t[:, None, None, None]
-
+    def bce_loss(self, predicted_mask, mask):
+        '''
+        Binary cross entropy loss
+        :param predicted_mask: predicted mask
+        :param mask: ground truth mask
+        '''
         bce = nn.BCELoss()
-        labels = F.one_hot(mask.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
-        labels = labels.float()
-        preds = gaussian_to_class(self.mu, predicted_noise).squeeze(1)
-        preds = F.one_hot(preds.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
-        preds = preds.float()
-        cross_entropy = bce(preds, labels)
-
+        return bce(predicted_mask, mask)
+    
+    def kl_loss(self):
+        '''
+        KL divergence loss
+        :param predicted_mask: predicted mask
+        :param mask: ground truth mask
+        '''
         cnt = 0
         # kl divergence
         for i in range(self.n_classes):
@@ -501,8 +491,119 @@ class FlowMS(nn.Module):
 
         kl_loss = kl_loss/cnt
         kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
+
+        return kl_loss
+    
+    def dice_loss(self, predicted_mask, mask):
+        '''
+        Dice loss
+        :param predicted_mask: predicted mask
+        :param mask: ground truth mask
+        '''
+        return 1 - generalized_dice_score(predicted_mask, mask, self.n_classes).mean()
+
+    def conditional_flow_matching_loss(self, x, mask):
         
-        return (predicted_flow - optimal_flow).square().mean(), cross_entropy, kl_loss
+        sigma_min = 1e-4
+        t = torch.rand(x.shape[0], device=x.device)
+
+        for i in range(self.n_classes):
+            inst_mask = (mask == i).float()
+            if i == 0:
+                noise = self.mask_to_gaussian(i, inst_mask, x.shape)
+            else:
+                noise += self.mask_to_gaussian(i, inst_mask, x.shape)
+
+        x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
+        optimal_flow = x - (1 - sigma_min) * noise
+        predicted_flow = self.unet(x_t, t)
+        predicted_noise = x_t - predicted_flow*t[:, None, None, None]
+
+        labels = F.one_hot(mask.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
+        labels = labels.float()
+        preds = gaussian_to_class(self.mu, predicted_noise).squeeze(1)
+        preds = F.one_hot(preds.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
+        preds = preds.float()
+        
+        bce_loss = self.bce_loss(preds, labels)
+        kl_loss = self.kl_loss()
+        dice_loss = self.dice_loss(preds, labels)
+        
+        return (predicted_flow - optimal_flow).square().mean(), bce_loss, dice_loss, kl_loss
+    
+    def train_model(self, init_dataloader, final_dataloader, testloader=None):
+        '''
+        Train the FlowMS model
+        :param init_dataloader: initial dataloader for training model and distributions
+        :param final_dataloader: final dataloader for training model only
+        :param testloader: test loader
+        '''
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=self.decay)
+        epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
+        create_checkpoint_dir()
+
+        if self.mu.requires_grad or self.var.requires_grad:
+            dataloader = init_dataloader
+        else:
+            dataloader = final_dataloader
+
+        lr_lambda = lambda epoch: min(1.0, (epoch + 1) / self.warmup)  # noqa
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+        best_loss = float('inf')
+        for epoch in epoch_bar:
+
+            epoch_loss_rec = 0.
+            epoch_loss_ce = 0.
+            epoch_loss_kl = 0.
+            epoch_loss = 0.
+            self.train()
+
+            for x, mask in tqdm(dataloader, desc='Batches', leave=False):
+                x = x.to(self.device)
+                mask = mask.to(self.device)
+                optimizer.zero_grad()
+
+                recon_loss, bce_loss, dice_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
+                loss = recon_loss + self.w_seg*0.5*(bce_loss + dice_loss)
+
+                # if we dont need to train the distributions then we dont need to backpropagate through them (saves ~2x memory)
+                if self.mu.requires_grad or self.var.requires_grad:
+                    loss.backward(retain_graph=True)
+                else:
+                    loss.backward()
+
+                optimizer.step()
+                epoch_loss += loss.item()*x.shape[0]
+                epoch_loss_rec += recon_loss.item()*x.shape[0]
+                epoch_loss_ce += bce_loss.item()*x.shape[0]
+                epoch_loss_kl += kl_loss.item()*x.shape[0]
+
+            epoch_loss /= len(dataloader.dataset)
+            epoch_bar.set_postfix(loss=epoch_loss)
+            wandb.log({"loss": epoch_loss})
+            wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
+            wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
+            scheduler.step()
+
+            if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
+                x, mask = next(iter(testloader))
+                mask = mask.to(self.device)
+                self.sample_from_mask(mask, self.args.n_steps, shape=x.shape)
+                x = x.to(self.device)
+                self.segment_image(x, self.args.n_steps, mask)
+                self.draw_gaussians()
+            
+            if epoch_loss_kl/len(dataloader.dataset) < self.tolerance:
+                # disable gradient in the means and variances if the distributions are already far apart
+                self.mu.requires_grad = False
+                self.var.requires_grad = False
+                dataloader = final_dataloader
+                #dataloader.batch_size *= 2
+            
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
+                torch.save(self.unet.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_mod.pt'))
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -711,81 +812,6 @@ class FlowMS(nn.Module):
             plt.show()
         plt.close(fig)
         
-
-    def train_model(self, init_dataloader, final_dataloader, testloader=None):
-        '''
-        Train the FlowMS model
-        :param init_dataloader: initial dataloader for training model and distributions
-        :param final_dataloader: final dataloader for training model only
-        :param testloader: test loader
-        '''
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=self.decay)
-        epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
-        create_checkpoint_dir()
-
-        if self.mu.requires_grad or self.var.requires_grad:
-            dataloader = init_dataloader
-        else:
-            dataloader = final_dataloader
-
-        lr_lambda = lambda epoch: min(1.0, (epoch + 1) / self.warmup)  # noqa
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-
-        best_loss = float('inf')
-        for epoch in epoch_bar:
-
-            epoch_loss_rec = 0.
-            epoch_loss_ce = 0.
-            epoch_loss_kl = 0.
-            epoch_loss = 0.
-            self.train()
-
-            for x, mask in tqdm(dataloader, desc='Batches', leave=False):
-                x = x.to(self.device)
-                mask = mask.to(self.device)
-                optimizer.zero_grad()
-
-                recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
-                loss = recon_loss + self.w_bce*ce_loss
-
-                # if we dont need to train the distributions then we dont need to backpropagate through them (saves ~2x memory)
-                if self.mu.requires_grad or self.var.requires_grad:
-                    loss.backward(retain_graph=True)
-                else:
-                    loss.backward()
-
-                optimizer.step()
-                epoch_loss += loss.item()*x.shape[0]
-                epoch_loss_rec += recon_loss.item()*x.shape[0]
-                epoch_loss_ce += ce_loss.item()*x.shape[0]
-                epoch_loss_kl += kl_loss.item()*x.shape[0]
-
-            epoch_loss /= len(dataloader.dataset)
-            epoch_bar.set_postfix(loss=epoch_loss)
-            wandb.log({"loss": epoch_loss})
-            wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
-            wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
-            scheduler.step()
-
-            if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
-                x, mask = next(iter(testloader))
-                mask = mask.to(self.device)
-                self.sample_from_mask(mask, self.args.n_steps, shape=x.shape)
-                x = x.to(self.device)
-                self.segment_image(x, self.args.n_steps, mask)
-                self.draw_gaussians()
-            
-            if epoch_loss_kl/len(dataloader.dataset) < self.tolerance:
-                # disable gradient in the means and variances if the distributions are already far apart
-                self.mu.requires_grad = False
-                self.var.requires_grad = False
-                dataloader = final_dataloader
-                #dataloader.batch_size *= 2
-            
-            if epoch_loss < best_loss:
-                best_loss = epoch_loss
-                torch.save(self.unet.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_mod.pt'))
-
     def load_model(self, model_path):
         '''
         Load the FlowMS model

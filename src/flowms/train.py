@@ -17,8 +17,7 @@ if __name__ == '__main__':
 
     elif args.dataset == 'celeb':
         #trainloader = train_loader_celebamaskhq(batch_size=args.batch_size, size=args.size, num_workers=args.num_workers)
-        init_trainloader = train_loader_celebamaskhq(batch_size=args.batch_size//2, size=args.size, num_workers=args.num_workers)
-        final_trainloader = train_loader_celebamaskhq(batch_size=args.batch_size, size=args.size, num_workers=args.num_workers)
+        init_trainloader, final_trainloader = train_loader_celebamaskhq(batch_size=args.batch_size, size=args.size, num_workers=args.num_workers, double=True)
         testloader = test_loader_celebamaskhq(batch_size=args.n_samples, size=args.size)
 
     elif args.dataset == 'cityscapes':
@@ -49,7 +48,9 @@ if __name__ == '__main__':
                     'var': args.var,
                     'warmup': args.warmup,
                     'decay': args.decay,
-                    'clip': args.clip
+                    'clip': args.clip,
+                    'w_seg': args.w_seg,
+                    'anchor': args.anchor,
                 },
 
                 name = f"Flow-MS_{args.dataset}",)

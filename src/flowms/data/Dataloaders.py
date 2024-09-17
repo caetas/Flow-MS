@@ -105,11 +105,14 @@ class CelebAMaskHQ(Dataset):
         self.root_dir = root_dir
         self.size = size
         self.imgs = glob(os.path.join(root_dir, 'CelebAMask-HQ', 'imgs', '*'))
+        self.train = train
         np.random.seed(0)
         np.random.shuffle(self.imgs)
         np.random.seed(None)
         if train:
             self.imgs = self.imgs[:int(0.8*len(self.imgs))]
+            self.masks = [np.array(Image.open(img.replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')) for img in tqdm(self.imgs, desc='Loading masks to RAM')]
+            self.imgs = [np.array(Image.open(img).convert('RGB')) for img in tqdm(self.imgs, desc='Loading images to RAM')]
         else:
             self.imgs = self.imgs[int(0.8*len(self.imgs)):]
 
@@ -117,11 +120,15 @@ class CelebAMaskHQ(Dataset):
         return len(self.imgs)
 
     def __getitem__(self, idx):
-        img = Image.open(self.imgs[idx]).convert('RGB')
-        img = np.array(img)
+        if self.train:
+            img = self.imgs[idx]
+            mask = self.masks[idx]
+        else:
+            img = Image.open(self.imgs[idx]).convert('RGB')
+            img = np.array(img)
 
-        mask = Image.open(self.imgs[idx].replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')
-        mask = np.array(mask)
+            mask = Image.open(self.imgs[idx].replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')
+            mask = np.array(mask)
 
         img = cv2.resize(img, (self.size, self.size))
         mask = cv2.resize(mask, (self.size, self.size), interpolation=cv2.INTER_NEAREST)
@@ -186,8 +193,12 @@ def train_loader_brats(size=64, batch_size=8, num_workers=0):
 def test_loader_brats(size=64, batch_size=8):
     return DataLoader(BraTS(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
 
-def train_loader_celebamaskhq(size=64, batch_size=8, num_workers=0):
-    return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True, num_workers=num_workers)
+def train_loader_celebamaskhq(size=64, batch_size=8, num_workers=0, double=False):
+    if double:
+        dataset = CelebAMaskHQ(data_raw_dir, size=size, train=True)
+        return DataLoader(dataset, batch_size=batch_size//2, shuffle=True, num_workers=num_workers), DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    else:
+        return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
 def test_loader_celebamaskhq(size=64, batch_size=8):
     return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
