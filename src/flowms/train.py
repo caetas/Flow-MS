@@ -16,7 +16,9 @@ if __name__ == '__main__':
         testloader = test_loader_brats(batch_size=args.n_samples, size=args.size)
 
     elif args.dataset == 'celeb':
-        trainloader = train_loader_celebamaskhq(batch_size=args.batch_size, size=args.size, num_workers=args.num_workers)
+        #trainloader = train_loader_celebamaskhq(batch_size=args.batch_size, size=args.size, num_workers=args.num_workers)
+        init_trainloader = train_loader_celebamaskhq(batch_size=args.batch_size//2, size=args.size, num_workers=args.num_workers)
+        final_trainloader = train_loader_celebamaskhq(batch_size=args.batch_size, size=args.size, num_workers=args.num_workers)
         testloader = test_loader_celebamaskhq(batch_size=args.n_samples, size=args.size)
 
     elif args.dataset == 'cityscapes':
@@ -51,4 +53,5 @@ if __name__ == '__main__':
                 },
 
                 name = f"Flow-MS_{args.dataset}",)
-    model.train_model(trainloader, testloader)
+    #model.train_model(trainloader, testloader)
+    model.train_model(init_trainloader, final_trainloader, testloader)

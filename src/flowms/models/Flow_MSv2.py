@@ -432,10 +432,8 @@ class FlowMS(nn.Module):
         self.args = args
         self.channels = channels
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        #self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=not args.anchor)
-        #self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.25,0.75).to(self.device), requires_grad=True)
-        self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=False)
-        self.var = torch.nn.Parameter(0.3*torch.ones(args.n_classes, channels).to(self.device), requires_grad=False)
+        self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=not args.anchor)
+        self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.25,0.75).to(self.device), requires_grad=True)
         self.prior = [torch.distributions.Normal(self.mu[i], self.var[i]) for i in range(args.n_classes)]
         self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
         self.unet.to(self.device)
@@ -714,34 +712,48 @@ class FlowMS(nn.Module):
         plt.close(fig)
         
 
-    def train_model(self, dataloader, testloader=None):
+    def train_model(self, init_dataloader, final_dataloader, testloader=None):
         '''
         Train the FlowMS model
-        :param dataloader: dataloader for the dataset
+        :param init_dataloader: initial dataloader for training model and distributions
+        :param final_dataloader: final dataloader for training model only
+        :param testloader: test loader
         '''
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=self.decay)
         epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
         create_checkpoint_dir()
+
+        if self.mu.requires_grad or self.var.requires_grad:
+            dataloader = init_dataloader
+        else:
+            dataloader = final_dataloader
 
         lr_lambda = lambda epoch: min(1.0, (epoch + 1) / self.warmup)  # noqa
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
         best_loss = float('inf')
         for epoch in epoch_bar:
+
             epoch_loss_rec = 0.
             epoch_loss_ce = 0.
             epoch_loss_kl = 0.
             epoch_loss = 0.
-            self.unet.train()
+            self.train()
+
             for x, mask in tqdm(dataloader, desc='Batches', leave=False):
                 x = x.to(self.device)
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
+
                 recon_loss, ce_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
-                
                 loss = recon_loss + self.w_bce*ce_loss
-                #loss.backward(retain_graph=True)
-                loss.backward()
+
+                # if we dont need to train the distributions then we dont need to backpropagate through them (saves ~2x memory)
+                if self.mu.requires_grad or self.var.requires_grad:
+                    loss.backward(retain_graph=True)
+                else:
+                    loss.backward()
+
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
@@ -767,6 +779,7 @@ class FlowMS(nn.Module):
                 # disable gradient in the means and variances if the distributions are already far apart
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
+                dataloader = final_dataloader
                 #dataloader.batch_size *= 2
             
             if epoch_loss < best_loss:
