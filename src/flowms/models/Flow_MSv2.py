@@ -598,7 +598,7 @@ class FlowMS(nn.Module):
                 # disable gradient in the means and variances if the distributions are already far apart
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
-                dataloader = final_dataloader
+                #dataloader = final_dataloader
                 #dataloader.batch_size *= 2
             
             if epoch_loss < best_loss:
