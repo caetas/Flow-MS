@@ -603,7 +603,7 @@ class FlowMS(nn.Module):
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
-                torch.save(self.unet.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_mod.pt'))
+                torch.save(self.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_mod.pt'))
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:

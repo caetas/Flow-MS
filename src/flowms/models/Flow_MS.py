@@ -774,8 +774,8 @@ class FlowMS(nn.Module):
         Load the FlowMS model
         :param model_path: path to the model
         '''
-        self.unet.load_state_dict(torch.load(model_path))
-        self.unet.eval()
+        self.load_state_dict(torch.load(model_path))
+        self.eval()
 
     def sample(self, test_loader):
         '''
