@@ -1,7 +1,7 @@
 from data.Dataloaders import *
 import matplotlib.pyplot as plt
 from utils.util import parse_args
-from models.Flow_MS import FlowMS
+from models.Flow_MSv2 import FlowMS
 
 args = parse_args()
 

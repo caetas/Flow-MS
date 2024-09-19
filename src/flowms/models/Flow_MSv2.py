@@ -410,7 +410,7 @@ def initial_means(n_classes, dist=4.0):
     N_actual = side_points ** 3
 
     # Generate a grid with evenly spaced points along each axis
-    linspace = torch.linspace(-dist, dist, side_points)
+    linspace = torch.linspace(-dist*(side_points-1)/2., dist*(side_points-1)/2., side_points)
     x, y, z = torch.meshgrid(linspace, linspace, linspace)
 
     # Stack the grid coordinates and reshape them into N_actual x 3 shape
@@ -531,7 +531,7 @@ class FlowMS(nn.Module):
         
         return (predicted_flow - optimal_flow).square().mean(), bce_loss, dice_loss, kl_loss
     
-    def train_model(self, init_dataloader, final_dataloader, testloader=None):
+    def train_model(self, dataloader, testloader=None):
         '''
         Train the FlowMS model
         :param init_dataloader: initial dataloader for training model and distributions
@@ -541,11 +541,6 @@ class FlowMS(nn.Module):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=self.decay)
         epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
         create_checkpoint_dir()
-
-        if self.mu.requires_grad or self.var.requires_grad:
-            dataloader = init_dataloader
-        else:
-            dataloader = final_dataloader
 
         lr_lambda = lambda epoch: min(1.0, (epoch + 1) / self.warmup)  # noqa
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
@@ -571,7 +566,7 @@ class FlowMS(nn.Module):
                 if self.mu.requires_grad or self.var.requires_grad:
                     loss.backward(retain_graph=True)
                 else:
-                    loss.backward()
+                    loss.backward(retain_graph=False)
 
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
@@ -603,7 +598,7 @@ class FlowMS(nn.Module):
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
-                torch.save(self.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_mod.pt'))
+                torch.save(self.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_{self.args.size}.pt'))
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -817,8 +812,9 @@ class FlowMS(nn.Module):
         Load the FlowMS model
         :param model_path: path to the model
         '''
+        #self.load_state_dict(torch.load(model_path))
         self.load_state_dict(torch.load(model_path))
-        self.unet.eval()
+        self.eval()
 
     def sample(self, test_loader):
         '''

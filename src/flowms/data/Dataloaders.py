@@ -111,8 +111,8 @@ class CelebAMaskHQ(Dataset):
         np.random.seed(None)
         if train:
             self.imgs = self.imgs[:int(0.8*len(self.imgs))]
-            self.masks = [np.array(Image.open(img.replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')) for img in tqdm(self.imgs, desc='Loading masks to RAM')]
-            self.imgs = [np.array(Image.open(img).convert('RGB')) for img in tqdm(self.imgs, desc='Loading images to RAM')]
+            self.masks = [cv2.resize(np.array(Image.open(img.replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')), (self.size, self.size), interpolation=cv2.INTER_NEAREST) for img in tqdm(self.imgs, desc='Loading masks to RAM')]
+            self.imgs = [cv2.resize(np.array(Image.open(img).convert('RGB')), (self.size, self.size), interpolation=cv2.INTER_LANCZOS4) for img in tqdm(self.imgs, desc='Loading images to RAM')]
         else:
             self.imgs = self.imgs[int(0.8*len(self.imgs)):]
 
@@ -130,8 +130,8 @@ class CelebAMaskHQ(Dataset):
             mask = Image.open(self.imgs[idx].replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')
             mask = np.array(mask)
 
-        img = cv2.resize(img, (self.size, self.size))
-        mask = cv2.resize(mask, (self.size, self.size), interpolation=cv2.INTER_NEAREST)
+            img = cv2.resize(img, (self.size, self.size))
+            mask = cv2.resize(mask, (self.size, self.size), interpolation=cv2.INTER_NEAREST)
 
         img = img.astype(np.float32)/255.0
         img = img * 2 - 1
@@ -144,18 +144,18 @@ def remap_labels(mask, classes):
         if c.train_id == 255 or c.train_id == -1:
             mask[mask == c.id] = 0
         else:
-            mask[mask == c.id] = c.train_id
+            mask[mask == c.id] = c.category_id
+            #mask[mask == c.id] = c.train_id
     return mask
 
 class CustomCityscapes(Dataset):
     def __init__(self, root_dir, split='train', mode='fine', target_type='semantic', size=64):
         self.root_dir = root_dir
-        self.split = split
         self.mode = mode
         self.target_type = target_type
         dataset = Cityscapes(root_dir, split=split, mode=mode, target_type=target_type)
-        self.images = dataset.images
-        self.targets = dataset.targets
+        self.images = [cv2.resize(np.array(Image.open(img).convert('RGB')), (size*2, size), interpolation=cv2.INTER_LANCZOS4) for img in tqdm(dataset.images, desc='Loading images to RAM')]
+        self.targets = [cv2.resize(np.array(Image.open(target[0]).convert('L')), (size*2, size), interpolation=cv2.INTER_NEAREST) for target in tqdm(dataset.targets, desc='Loading targets to RAM')]
         self.classes = dataset.classes
         self.size = size
         self.split = split
@@ -164,13 +164,9 @@ class CustomCityscapes(Dataset):
         return len(self.images)
 
     def __getitem__(self, idx):
-        og_img = Image.open(self.images[idx]).convert('RGB')
-        og_target = Image.open(self.targets[idx][0]).convert('L')
-        og_img = np.array(og_img)
-        og_target = np.array(og_target)
-        
-        og_img = cv2.resize(og_img, (self.size*2, self.size))
-        og_target = cv2.resize(og_target, (self.size*2, self.size), interpolation=cv2.INTER_NEAREST)
+        og_img = self.images[idx]
+        og_target = self.targets[idx]
+
         random_crop = np.random.randint(0, self.size//2)
         img = og_img[:, random_crop:random_crop+self.size].copy()
         target = og_target[:, random_crop:random_crop+self.size].copy()
@@ -194,11 +190,13 @@ def test_loader_brats(size=64, batch_size=8):
     return DataLoader(BraTS(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
 
 def train_loader_celebamaskhq(size=64, batch_size=8, num_workers=0, double=False):
+    '''
     if double:
         dataset = CelebAMaskHQ(data_raw_dir, size=size, train=True)
         return DataLoader(dataset, batch_size=batch_size//2, shuffle=True, num_workers=num_workers), DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     else:
-        return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    '''
+    return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=True), batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
 def test_loader_celebamaskhq(size=64, batch_size=8):
     return DataLoader(CelebAMaskHQ(data_raw_dir, size=size, train=False), batch_size=batch_size, shuffle=True)
