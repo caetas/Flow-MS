@@ -566,7 +566,7 @@ class FlowMS(nn.Module):
                     'w_seg': self.args.w_seg,
                     'anchor': self.args.anchor,
                 },
-                init_kwargs={"name": f"Flow-MS_{self.args.dataset}"})
+                init_kwargs={"wandb":{"name": f"Flow-MS_{self.args.dataset}"}})
         
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=self.decay)
         epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
