@@ -581,6 +581,9 @@ class FlowMS(nn.Module):
             wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
             scheduler.step()
 
+            if epoch_loss > 3*best_loss:
+                self.load_state_dict(torch.load(os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_{self.args.size}.pt')))
+
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
                 x, mask = next(iter(testloader))
                 mask = mask.to(self.device)
