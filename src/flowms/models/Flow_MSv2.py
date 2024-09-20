@@ -550,7 +550,7 @@ class FlowMS(nn.Module):
 
         best_loss = float('inf')
 
-        dataloader, self , optimizer, scheduler = accelerate.prepare(dataloader, self, optimizer, scheduler)
+        dataloader, self.unet, self.mu, self.var, optimizer, scheduler = accelerate.prepare(dataloader, self.unet, self.mu, self.var, optimizer, scheduler)
 
         for epoch in epoch_bar:
 
