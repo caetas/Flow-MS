@@ -14,6 +14,8 @@ import os
 from torchdiffeq import odeint
 import numpy as np
 from torchmetrics.functional.segmentation import mean_iou, generalized_dice_score
+from accelerate import Accelerator
+
 
 def exists(x):
     return x is not None
@@ -538,6 +540,7 @@ class FlowMS(nn.Module):
         :param final_dataloader: final dataloader for training model only
         :param testloader: test loader
         '''
+        accelerate = Accelerator()
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=self.decay)
         epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
         create_checkpoint_dir()
@@ -546,6 +549,9 @@ class FlowMS(nn.Module):
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
         best_loss = float('inf')
+
+        dataloader, self , optimizer, scheduler = accelerate.prepare(dataloader, self, optimizer, scheduler)
+
         for epoch in epoch_bar:
 
             epoch_loss_rec = 0.
@@ -555,8 +561,8 @@ class FlowMS(nn.Module):
             self.train()
 
             for x, mask in tqdm(dataloader, desc='Batches', leave=False):
-                x = x.to(self.device)
-                mask = mask.to(self.device)
+                #x = x.to(self.device)
+                #mask = mask.to(self.device)
                 optimizer.zero_grad()
 
                 recon_loss, bce_loss, dice_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
@@ -564,15 +570,18 @@ class FlowMS(nn.Module):
 
                 # if we dont need to train the distributions then we dont need to backpropagate through them (saves ~2x memory)
                 if self.mu.requires_grad or self.var.requires_grad:
-                    loss.backward(retain_graph=True)
+                    #loss.backward(retain_graph=True)
+                    accelerate.backward(loss, retain_graph=True)
                 else:
-                    loss.backward(retain_graph=False)
+                    #loss.backward(retain_graph=False)
+                    accelerate.backward(loss, retain_graph=False)
 
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
                 epoch_loss_rec += recon_loss.item()*x.shape[0]
                 epoch_loss_ce += bce_loss.item()*x.shape[0]
                 epoch_loss_kl += kl_loss.item()*x.shape[0]
+                break
 
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
@@ -601,7 +610,8 @@ class FlowMS(nn.Module):
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
-                torch.save(self.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_{self.args.size}.pt'))
+                #torch.save(self.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_{self.args.size}.pt'))
+                accelerate.save(self.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_{self.args.size}.pt'))
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -851,8 +861,8 @@ class FlowMS(nn.Module):
         # preds and masks should be a one-hot boolean tensor of shape N, n_claases, H,W
         preds = F.one_hot(preds.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
         masks = F.one_hot(masks.long(), num_classes=self.n_classes).permute(0, 3, 1, 2)
-        miou = mean_iou(preds, masks, num_classes=self.n_classes).mean()
-        gds = generalized_dice_score(preds, masks, num_classes=self.n_classes).mean()
+        miou = mean_iou(preds, masks, num_classes=self.n_classes, include_background=False).mean()
+        gds = generalized_dice_score(preds, masks, num_classes=self.n_classes, include_background=False).mean()
         print(f'Mean IoU: {miou:.4f}')
         print(f'Dice Score: {gds:.4f}')
 
