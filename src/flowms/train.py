@@ -25,34 +25,4 @@ if __name__ == '__main__':
         testloader = test_loader_cityscapes(batch_size=args.n_samples, size=args.size)
 
     model = FlowMS(args)
-
-    wandb.init(project='Flow-MS',
-            
-            config = {
-                    'batch_size': args.batch_size,
-                    'n_epochs': args.n_epochs,
-                    'lr': args.lr,
-                    'n_features': args.n_features,
-                    'init_channels': args.init_channels,
-                    'channel_scale_factors': args.channel_scale_factors,
-                    'resnet_block_groups': args.resnet_block_groups,
-                    'use_convnext': args.use_convnext,
-                    'convnext_scale_factor': args.convnext_scale_factor,
-                    'sample_and_save_freq': args.sample_and_save_freq,
-                    'n_samples': args.n_samples,
-                    'n_steps': args.n_steps,
-                    'n_classes': args.n_classes,
-                    'dataset': args.dataset,
-                    'size': args.size,
-                    'dist': args.dist,
-                    'var': args.var,
-                    'warmup': args.warmup,
-                    'decay': args.decay,
-                    'clip': args.clip,
-                    'w_seg': args.w_seg,
-                    'anchor': args.anchor,
-                },
-
-                name = f"Flow-MS_{args.dataset}",)
-    #model.train_model(trainloader, testloader)
     model.train_model(trainloader, testloader)

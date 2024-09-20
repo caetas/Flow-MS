@@ -540,7 +540,34 @@ class FlowMS(nn.Module):
         :param final_dataloader: final dataloader for training model only
         :param testloader: test loader
         '''
-        accelerate = Accelerator()
+        accelerate = Accelerator(log_with="wandb")
+        accelerate.init_trackers(project_name='Flow-MS',
+            config = {
+                    'batch_size': self.args.batch_size,
+                    'n_epochs': self.args.n_epochs,
+                    'lr': self.args.lr,
+                    'n_features': self.args.n_features,
+                    'init_channels': self.args.init_channels,
+                    'channel_scale_factors': self.args.channel_scale_factors,
+                    'resnet_block_groups': self.args.resnet_block_groups,
+                    'use_convnext': self.args.use_convnext,
+                    'convnext_scale_factor': self.args.convnext_scale_factor,
+                    'sample_and_save_freq': self.args.sample_and_save_freq,
+                    'n_samples': self.args.n_samples,
+                    'n_steps': self.args.n_steps,
+                    'n_classes': self.args.n_classes,
+                    'dataset': self.args.dataset,
+                    'size': self.args.size,
+                    'dist': self.args.dist,
+                    'var': self.args.var,
+                    'warmup': self.args.warmup,
+                    'decay': self.args.decay,
+                    'clip': self.args.clip,
+                    'w_seg': self.args.w_seg,
+                    'anchor': self.args.anchor,
+                },
+                init_kwargs={"name": f"Flow-MS_{self.args.dataset}"})
+        
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr, weight_decay=self.decay)
         epoch_bar = trange(self.args.n_epochs, desc='Epochs', leave=True)
         create_checkpoint_dir()
@@ -550,7 +577,10 @@ class FlowMS(nn.Module):
 
         best_loss = float('inf')
 
-        dataloader, self.unet, self.mu, self.var, optimizer, scheduler = accelerate.prepare(dataloader, self.unet, self.mu, self.var, optimizer, scheduler)
+        if not self.args.anchor:
+            dataloader, self.unet, self.mu, self.var, optimizer, scheduler = accelerate.prepare(dataloader, self.unet, self.mu, self.var, optimizer, scheduler)
+        else:
+            dataloader, self.unet, self.var, optimizer, scheduler = accelerate.prepare(dataloader, self.unet, self.var, optimizer, scheduler)
 
         for epoch in epoch_bar:
 
@@ -584,9 +614,9 @@ class FlowMS(nn.Module):
 
             epoch_loss /= len(dataloader.dataset)
             epoch_bar.set_postfix(loss=epoch_loss)
-            wandb.log({"loss": epoch_loss})
-            wandb.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
-            wandb.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
+            accelerate.log({"loss": epoch_loss})
+            accelerate.log({"recon_loss": epoch_loss_rec/len(dataloader.dataset)})
+            accelerate.log({"ce_loss": epoch_loss_ce/len(dataloader.dataset)})
             scheduler.step()
 
             if epoch_loss > 3*best_loss:
@@ -595,10 +625,10 @@ class FlowMS(nn.Module):
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
                 x, mask = next(iter(testloader))
                 mask = mask.to(self.device)
-                self.sample_from_mask(mask, self.args.n_steps, shape=x.shape)
+                self.sample_from_mask(mask, self.args.n_steps, shape=x.shape, accelerate=accelerate)
                 x = x.to(self.device)
-                self.segment_image(x, self.args.n_steps, mask)
-                self.draw_gaussians()
+                self.segment_image(x, self.args.n_steps, mask, accelerate=accelerate)
+                self.draw_gaussians(accelerate=accelerate)
             
             if epoch_loss_kl/len(dataloader.dataset) < self.tolerance:
                 # disable gradient in the means and variances if the distributions are already far apart
@@ -611,6 +641,8 @@ class FlowMS(nn.Module):
                 best_loss = epoch_loss
                 #torch.save(self.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_{self.args.size}.pt'))
                 accelerate.save(self.state_dict(), os.path.join(models_dir, 'FlowMS', f'FlowMS_{self.dataset}_{self.args.size}.pt'))
+        
+        accelerate.end_training()
     
     def mask_to_gaussian(self, index, mask, img_shape = None):
         if img_shape is None:
@@ -620,7 +652,7 @@ class FlowMS(nn.Module):
         return z
     
     @torch.no_grad()
-    def sample_from_mask(self, mask, n_steps, train=True, shape = None):
+    def sample_from_mask(self, mask, n_steps, accelerate=None, train=True, shape = None):
         if shape is None:
             shape = mask.shape
         for i in range(self.n_classes):
@@ -700,13 +732,13 @@ class FlowMS(nn.Module):
             plt.subplots_adjust(wspace=0, hspace=0)
             plt.tight_layout()
         if train:
-            wandb.log({"samples": fig})
+            accelerate.log({"samples": fig})
         else:
             plt.show()
         plt.close(fig)
     
     @torch.no_grad()
-    def segment_image(self, x, n_steps, mask, train=True, test=False):
+    def segment_image(self, x, n_steps, mask, accelerate=None, train=True, test=False):
         '''
         Segment the image
         :param x: input image
@@ -814,7 +846,7 @@ class FlowMS(nn.Module):
             plt.tight_layout()
 
         if train:
-            wandb.log({"segmentation": fig})
+            accelerate.log({"segmentation": fig})
         else:
             plt.show()
         plt.close(fig)
@@ -935,7 +967,7 @@ class FlowMS(nn.Module):
         return x_t
     
     @torch.no_grad()
-    def draw_gaussians(self):
+    def draw_gaussians(self, accelerate=None):
         '''
         Plot the gaussians that represent the classes
         '''
@@ -950,7 +982,7 @@ class FlowMS(nn.Module):
         ax.set_zlabel('Channel B')
         # push legend out of the plot, to the top
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.1), ncol=min(6, self.n_classes))
-        wandb.log({"gaussians": wandb.Image(fig)})
+        accelerate.log({"gaussians": wandb.Image(fig)})
         plt.close(fig)
             
         

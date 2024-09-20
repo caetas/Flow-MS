@@ -154,8 +154,8 @@ class CustomCityscapes(Dataset):
         self.mode = mode
         self.target_type = target_type
         dataset = Cityscapes(root_dir, split=split, mode=mode, target_type=target_type)
-        self.images = [cv2.resize(np.array(Image.open(img).convert('RGB')), (size*2, size), interpolation=cv2.INTER_LANCZOS4) for img in tqdm(dataset.images, desc='Loading images to RAM')]
-        self.targets = [cv2.resize(np.array(Image.open(target[0]).convert('L')), (size*2, size), interpolation=cv2.INTER_NEAREST) for target in tqdm(dataset.targets, desc='Loading targets to RAM')]
+        self.images = [cv2.resize(np.array(Image.open(img).convert('RGB')), (size*2, size), interpolation=cv2.INTER_LANCZOS4) for img in tqdm(dataset.images[:10], desc='Loading images to RAM')]
+        self.targets = [cv2.resize(np.array(Image.open(target[0]).convert('L')), (size*2, size), interpolation=cv2.INTER_NEAREST) for target in tqdm(dataset.targets[:10], desc='Loading targets to RAM')]
         self.classes = dataset.classes
         self.size = size
         self.split = split
