@@ -288,6 +288,9 @@ class UNet(nn.Module):
 
         dims = [init_channels, *map(lambda m: n_features * m, channel_scale_factors)]
         resolution_translations = list(zip(dims[:-1], dims[1:]))
+
+        print(resolution_translations)
+        print(dims)
         
         if use_convnext:
             block_klass = partial(ConvNextBlock, channel_scale_factor=convnext_scale_factor)
@@ -351,6 +354,9 @@ class UNet(nn.Module):
             block_klass(in_channels=n_features, out_channels=n_features), 
             nn.Conv2d(in_channels=n_features, out_channels=out_chan, kernel_size=1)
         )
+
+        print(self.encoder)
+        print(self.decoder)
 
     def forward(self, x, time):
         x = self.init_conv(x)
