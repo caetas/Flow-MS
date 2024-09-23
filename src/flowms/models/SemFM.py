@@ -1067,7 +1067,7 @@ class SemFM(nn.Module):
             scheduler.step()
 
             if epoch_loss > 3*best_loss:
-                self.load_state_dict(torch.load(os.patorch.join(models_dir, 'SemFM', f'SemFM_{self.dataset}_{self.args.size}.pt')))
+                self.load_state_dict(torch.load(os.path.join(models_dir, 'SemFM', f'SemFM_{self.dataset}_{self.args.size}.pt')))
 
             if (epoch+1) % self.args.sample_and_save_freq == 0 or epoch==0:
                 x, mask = next(iter(testloader))
@@ -1086,8 +1086,8 @@ class SemFM(nn.Module):
             
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
-                #torch.save(self.state_dict(), os.patorch.join(models_dir, 'SemFM', f'SemFM_{self.dataset}_{self.args.size}.pt'))
-                accelerate.save(self.state_dict(), os.patorch.join(models_dir, 'SemFM', f'SemFM_{self.dataset}_{self.args.size}.pt'))
+                #torch.save(self.state_dict(), os.path.join(models_dir, 'SemFM', f'SemFM_{self.dataset}_{self.args.size}.pt'))
+                accelerate.save(self.state_dict(), os.path.join(models_dir, 'SemFM', f'SemFM_{self.dataset}_{self.args.size}.pt'))
         
         accelerate.end_training()
     
