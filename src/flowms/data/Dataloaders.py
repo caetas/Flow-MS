@@ -114,7 +114,7 @@ class CelebAMaskHQ(Dataset):
         self.imgs = [os.path.join(root_dir, 'CelebAMask-HQ', 'imgs', img) for img in self.imgs]
 
         self.masks = [cv2.resize(np.array(Image.open(img.replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')), (self.size, self.size), interpolation=cv2.INTER_NEAREST) for img in tqdm(self.imgs, desc='Loading masks to RAM')]
-        self.imgs = [cv2.resize(np.array(Image.open(img).convert('RGB')), (self.size, self.size), interpolation=cv2.INTER_LANCZOS4) for img in tqdm(self.imgs, desc='Loading images to RAM')]
+        self.imgs = [cv2.resize(np.array(Image.open(img).convert('RGB')), (self.size, self.size), interpolation=cv2.INTER_AREA) for img in tqdm(self.imgs, desc='Loading images to RAM')]
 
     def __len__(self):
         return len(self.imgs)
@@ -145,7 +145,7 @@ class CustomCityscapes(Dataset):
         self.mode = mode
         self.target_type = target_type
         dataset = Cityscapes(root_dir, split=split, mode=mode, target_type=target_type)
-        self.images = [cv2.resize(np.array(Image.open(img).convert('RGB')), (size*2, size), interpolation=cv2.INTER_LANCZOS4) for img in tqdm(dataset.images, desc='Loading images to RAM')]
+        self.images = [cv2.resize(np.array(Image.open(img).convert('RGB')), (size*2, size), interpolation=cv2.INTER_AREA) for img in tqdm(dataset.images, desc='Loading images to RAM')]
         self.targets = [cv2.resize(np.array(Image.open(target[0]).convert('L')), (size*2, size), interpolation=cv2.INTER_NEAREST) for target in tqdm(dataset.targets, desc='Loading targets to RAM')]
         self.classes = dataset.classes
         self.size = size
