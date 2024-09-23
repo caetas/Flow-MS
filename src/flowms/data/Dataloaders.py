@@ -53,23 +53,20 @@ class BCCD(Dataset):
 
 class BraTS(Dataset):
     def __init__(self, root_dir, size=64, train=True):
+        
         self.root_dir = root_dir
         self.size = size
         base_dir = glob(os.path.join(root_dir, 'BraTS2020','*','*','*'))[0]
         # read all the h5 files in the .txt file
-        with open(os.path.join(data_dir, 'splits', 'brats_valid.txt'), 'r') as f:
-            h5files = f.readlines()
-        h5files = [file.strip() for file in h5files]
-        self.h5files = [os.path.join(base_dir, file) for file in h5files]
-        del h5files
-        # get 0.8 of the data for training
-        np.random.seed(0)
-        np.random.shuffle(self.h5files)
-        np.random.seed(None)
         if train:
-            self.h5files = self.h5files[:int(0.8*len(self.h5files))]
+            with open(os.path.join(data_dir, 'splits', 'brats_train.txt'), 'r') as f:
+                self.h5files = f.readlines()
         else:
-            self.h5files = self.h5files[int(0.8*len(self.h5files)):]
+            with open(os.path.join(data_dir, 'splits', 'brats_test.txt'), 'r') as f:
+                self.h5files = f.readlines()
+        
+        self.h5files = [file.strip() for file in self.h5files]
+        self.h5files = [os.path.join(base_dir, file) for file in self.h5files]
 
     def __len__(self):
         return len(self.h5files)
@@ -104,34 +101,28 @@ class CelebAMaskHQ(Dataset):
     def __init__(self, root_dir, size=64, train=True):
         self.root_dir = root_dir
         self.size = size
-        self.imgs = glob(os.path.join(root_dir, 'CelebAMask-HQ', 'imgs', '*'))
+        self.imgs = os.listdir(os.path.join(root_dir, 'CelebAMask-HQ', 'imgs'))
         self.train = train
-        np.random.seed(0)
-        np.random.shuffle(self.imgs)
-        np.random.seed(None)
         if train:
-            self.imgs = self.imgs[:int(0.8*len(self.imgs))]
-            self.masks = [cv2.resize(np.array(Image.open(img.replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')), (self.size, self.size), interpolation=cv2.INTER_NEAREST) for img in tqdm(self.imgs, desc='Loading masks to RAM')]
-            self.imgs = [cv2.resize(np.array(Image.open(img).convert('RGB')), (self.size, self.size), interpolation=cv2.INTER_LANCZOS4) for img in tqdm(self.imgs, desc='Loading images to RAM')]
+            with open(os.path.join(data_dir, 'splits', 'celebamaskhq_train.txt'), 'r') as f:
+                self.imgs = f.readlines()
         else:
-            self.imgs = self.imgs[int(0.8*len(self.imgs)):]
+            with open(os.path.join(data_dir, 'splits', 'celebamaskhq_test.txt'), 'r') as f:
+                self.imgs = f.readlines()
+        
+        self.imgs = [img.strip() for img in self.imgs]
+        self.imgs = [os.path.join(root_dir, 'CelebAMask-HQ', 'imgs', img) for img in self.imgs]
+
+        self.masks = [cv2.resize(np.array(Image.open(img.replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')), (self.size, self.size), interpolation=cv2.INTER_NEAREST) for img in tqdm(self.imgs, desc='Loading masks to RAM')]
+        self.imgs = [cv2.resize(np.array(Image.open(img).convert('RGB')), (self.size, self.size), interpolation=cv2.INTER_LANCZOS4) for img in tqdm(self.imgs, desc='Loading images to RAM')]
 
     def __len__(self):
         return len(self.imgs)
 
     def __getitem__(self, idx):
-        if self.train:
-            img = self.imgs[idx]
-            mask = self.masks[idx]
-        else:
-            img = Image.open(self.imgs[idx]).convert('RGB')
-            img = np.array(img)
 
-            mask = Image.open(self.imgs[idx].replace('imgs', 'masks').replace('.png', '_mask.png')).convert('L')
-            mask = np.array(mask)
-
-            img = cv2.resize(img, (self.size, self.size))
-            mask = cv2.resize(mask, (self.size, self.size), interpolation=cv2.INTER_NEAREST)
+        img = self.imgs[idx]
+        mask = self.masks[idx]
 
         img = img.astype(np.float32)/255.0
         img = img * 2 - 1
@@ -170,6 +161,11 @@ class CustomCityscapes(Dataset):
         random_crop = np.random.randint(0, self.size//2)
         img = og_img[:, random_crop:random_crop+self.size].copy()
         target = og_target[:, random_crop:random_crop+self.size].copy()
+
+        # flip the image with 0.5 probability
+        if np.random.rand() > 0.5:
+            img = np.flip(img, axis=1).copy()
+            target = np.flip(target, axis=1).copy()
 
         img = img.astype(np.float32) / 255.0
         img = img * 2 - 1

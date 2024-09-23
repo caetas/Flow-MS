@@ -32,7 +32,7 @@ def parse_args():
     argparser.add_argument('--tolerance', type=float, default=1e-2, help='minimum tolerance for training the gaussians')
     argparser.add_argument('--anchor', action='store_true', default=False, help='anchor the mean of the gaussians during training')
     argparser.add_argument('--num_heads', type=int, default=4, help='number of heads')
-    argparser.add_argument('--heads_dim', type=int, default=32, help='heads dimension')
+    argparser.add_argument('--head_dim', type=int, default=32, help='heads dimension')
     args = argparser.parse_args()
     args.channel_scale_factors = tuple(args.channel_scale_factors)
     return args
