@@ -1,6 +1,6 @@
 from PIL import Image
 import streamlit as st
-from models.Flow_MS import FlowMS, mask_to_gaussian
+from models.Flow_MSv2 import FlowMS
 from utils.util import parse_args
 import torch
 import numpy as np
@@ -13,9 +13,10 @@ def load_image(image_file, _n_steps):
     noise_seg, color_seg = generate_segmentation(img, model, _n_steps)
     return img, noise_seg, color_seg
 
+
 def generate_segmentation(_img, _model, _n_steps):
     image = np.array(_img)
-    image = cv2.resize(image, (_model.args.size, _model.args.size))
+    image = cv2.resize(image, (_model.args.size, _model.args.size), interpolation=cv2.INTER_LANCZOS4)
     # turn image into torch tensor
     image = image.astype(np.float32)
     image = (image / 127.5) - 1
@@ -81,7 +82,7 @@ if uploaded_image is not None:
         # make it binary
         edited_color_seg[edited_color_seg <= 1] = 0
         edited_color_seg[edited_color_seg > 1] = 1
-        new_noise = mask_to_gaussian(torch.from_numpy(edited_color_seg).unsqueeze(0), model.mean[class_to_edit], model.var, model.args.dist, noise_seg.shape).to(model.device)
+        new_noise = model.mask_to_gaussian(class_to_edit, torch.from_numpy(edited_color_seg).unsqueeze(0), noise_seg.shape).to(model.device)
         noise_seg = new_noise + noise_seg*(1-torch.from_numpy(edited_color_seg).to(model.device))
         recon_image = sample_image(noise_seg, model, n_steps)
         st.image(recon_image, caption="Generated Image", width=300)

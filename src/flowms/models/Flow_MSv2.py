@@ -265,7 +265,7 @@ class Upsample(nn.Module):
         return self.conv(x)
 
 class UNet(nn.Module):
-    def __init__(self, n_features, init_channels=None, out_channels=None, channel_scale_factors=(1, 2, 4, 8), in_channels=3, with_time_emb=True, resnet_block_groups=8, use_convnext=True, convnext_scale_factor=2):
+    def __init__(self, n_features, init_channels=None, out_channels=None, channel_scale_factors=(1, 2, 4, 8), in_channels=3, with_time_emb=True, resnet_block_groups=8, use_convnext=True, convnext_scale_factor=2, num_heads=4, head_dim=32):
         '''
         UNet module
         :param n_features: number of features
@@ -319,7 +319,7 @@ class UNet(nn.Module):
                     [
                         block_klass(in_channels=in_chan, out_channels=out_chan, time_embedding_dim=time_dim),
                         block_klass(in_channels=out_chan, out_channels=out_chan, time_embedding_dim=time_dim),
-                        Residual(fn=PreNorm(num_channels=out_chan, fn=LinearAttention(num_channels=out_chan))),
+                        Residual(fn=PreNorm(num_channels=out_chan, fn=LinearAttention(num_channels=out_chan, num_heads=num_heads, head_dim=head_dim))),
                         Downsample(num_channels=out_chan) if not is_last else nn.Identity(),
                     ]
                 )
@@ -327,7 +327,7 @@ class UNet(nn.Module):
 
         bottleneck_capacity = dims[-1]
         self.mid_block1 = block_klass(bottleneck_capacity, bottleneck_capacity, time_embedding_dim=time_dim)
-        self.mid_attn = Residual(PreNorm(bottleneck_capacity, Attention(bottleneck_capacity)))
+        self.mid_attn = Residual(PreNorm(bottleneck_capacity, Attention(bottleneck_capacity, num_heads=num_heads, head_dim=head_dim)))
         self.mid_block2 = block_klass(bottleneck_capacity, bottleneck_capacity, time_embedding_dim=time_dim)
 
         
@@ -340,7 +340,7 @@ class UNet(nn.Module):
                     [
                         block_klass(in_channels=out_chan * 2, out_channels=in_chan, time_embedding_dim=time_dim),
                         block_klass(in_channels=in_chan, out_channels=in_chan, time_embedding_dim=time_dim),
-                        Residual(fn=PreNorm(num_channels=in_chan, fn=LinearAttention(num_channels=in_chan))),
+                        Residual(fn=PreNorm(num_channels=in_chan, fn=LinearAttention(num_channels=in_chan, num_heads=num_heads, head_dim=head_dim))),
                         Upsample(num_channels=in_chan) if not is_last else nn.Identity(),
                     ]
                 )
@@ -423,6 +423,7 @@ def initial_means(n_classes, dist=4.0):
 
     return points.float()
 
+
 class FlowMS(nn.Module):
 
     def __init__(self, args, channels=3):
@@ -437,7 +438,7 @@ class FlowMS(nn.Module):
         self.mu = torch.nn.Parameter(initial_means(args.n_classes).to(self.device), requires_grad=not args.anchor)
         self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.5,1.0).to(self.device), requires_grad=True)
         self.prior = [torch.distributions.Normal(self.mu[i], self.var[i]) for i in range(args.n_classes)]
-        self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor)
+        self.unet = UNet(n_features=args.n_features, init_channels=args.init_channels, out_channels=channels, channel_scale_factors=args.channel_scale_factors, in_channels=channels, with_time_emb=True, resnet_block_groups=args.resnet_block_groups, use_convnext=args.use_convnext, convnext_scale_factor=args.convnext_scale_factor, num_heads=args.num_heads, head_dim=args.head_dim)
         self.unet.to(self.device)
         self.n_classes = args.n_classes
         self.dataset = args.dataset
@@ -565,6 +566,8 @@ class FlowMS(nn.Module):
                     'clip': self.args.clip,
                     'w_seg': self.args.w_seg,
                     'anchor': self.args.anchor,
+                    'num_heads': self.args.num_heads,
+                    'head_dim': self.args.head_dim,
                 },
                 init_kwargs={"wandb":{"name": f"Flow-MS_{self.args.dataset}"}})
         
@@ -856,8 +859,11 @@ class FlowMS(nn.Module):
         Load the FlowMS model
         :param model_path: path to the model
         '''
-        #self.load_state_dict(torch.load(model_path))
-        self.load_state_dict(torch.load(model_path))
+        # edit the keys of the state dict if it contains 'module.'
+        state_dict = torch.load(model_path)
+        # edit state dict keys, remove every "module."
+        state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+        self.load_state_dict(state_dict, strict=False)
         self.eval()
 
     def sample(self, test_loader):
@@ -927,7 +933,7 @@ class FlowMS(nn.Module):
                 x_t = -self.unet(x_t,torch.full(x_t.shape[:1], t, device=self.device))*1./n_steps + x_t
                 t -= 1./n_steps
         
-        x_map = gaussian_to_class(self.mean, x_t.cpu())
+        x_map = gaussian_to_class(self.mu, x_t.cpu())
         x_map_color = torch.zeros(x_map.shape[0], 3, x_map.shape[2], x_map.shape[3])
 
         for i in range(self.n_classes):
