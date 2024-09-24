@@ -895,6 +895,7 @@ class SemFM(nn.Module):
         self.solver = args.solver
         self.w_seg = args.w_seg
         self.tolerance = args.tolerance
+        self.dequantize = args.dequantize
         # self.colors should be a list of n_classes of rgb values
         np.random.seed(42)
         self.colors = np.random.randint(0, 255, size=(args.n_classes, 3))
@@ -959,6 +960,9 @@ class SemFM(nn.Module):
             else:
                 noise += self.mask_to_gaussian(i, inst_mask, x.shape)
 
+        if self.dequantize:
+            x = x + torch.rand_like(x) / 128.0
+
         x_t = (1 - (1 - sigma_min) * t[:, None, None, None]) * noise + t[:, None, None, None] * x
         optimal_flow = x - (1 - sigma_min) * noise
         predicted_flow = self.unet(x_t, t)
@@ -1011,7 +1015,8 @@ class SemFM(nn.Module):
                     'num_head_channels': self.args.num_head_channels,
                     'use_scale_shift_norm': self.args.use_scale_shift_norm,
                     'resblock_updown': self.args.resblock_updown,
-                    'use_new_attention_order': self.args.use_new_attention_order,        
+                    'use_new_attention_order': self.args.use_new_attention_order,
+                    'dequantize': self.args.dequantize,       
                 },
                 init_kwargs={"wandb":{"name": f"SemFM_{self.args.dataset}"}})
         
@@ -1190,6 +1195,8 @@ class SemFM(nn.Module):
         Segment the image
         :param x: input image
         '''
+        if self.dequantize:
+            x = x + 0.5 / 128.0 # keep it deterministic
         original_x = x.clone()
         x_t = x
         t=1.
