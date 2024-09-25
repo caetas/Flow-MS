@@ -68,7 +68,7 @@ def parse_args_SemFM():
     argparser.add_argument('--ode', action='store_true', default=False, help='use ODE solver')
     argparser.add_argument('--num_workers', type=int, default=0, help='number of workers')
     argparser.add_argument('--w_seg', type=float, default=0.2, help='weight for the segmentation loss')
-    argparser.add_argument('--tolerance', type=float, default=1e-2, help='minimum tolerance for training the gaussians')
+    argparser.add_argument('--tolerance', type=float, default=0.1, help='minimum tolerance for training the gaussians')
     argparser.add_argument('--anchor', action='store_true', default=False, help='anchor the mean of the gaussians during training')
     argparser.add_argument('--dequantize', action='store_true', default=False, help='dequantize the input')
     args = argparser.parse_args()

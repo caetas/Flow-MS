@@ -864,7 +864,8 @@ class SemFM(nn.Module):
         self.channels = channels
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.mu = torch.nn.Parameter(initial_means(args.n_classes, args.dist).to(self.device), requires_grad=not args.anchor)
-        self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.5,1.0).to(self.device), requires_grad=True)
+        #self.var = torch.nn.Parameter(torch.rand(args.n_classes, channels).clamp(0.5,1.0).to(self.device), requires_grad=True)
+        self.var = [torch.nn.Parameter(torch.rand(channels).clamp(0.5,1.0).to(self.device), requires_grad=True) for _ in range(args.n_classes)]
         self.prior = [torch.distributions.Normal(self.mu[i], self.var[i]) for i in range(args.n_classes)]
         self.unet = UNetModel(
             image_size=args.size,
@@ -927,18 +928,18 @@ class SemFM(nn.Module):
         cnt = 0
         # kl divergence
         for i in range(self.n_classes):
+            min_kl = np.inf
             for j in range(self.n_classes):
                 if i!=j:
-                    if i == 0 and j == 1:
-                        kl_loss = torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
-                    else:
-                        kl_loss += torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
-                    cnt += 1
+                    kl = torch.distributions.kl_divergence(self.prior[i], self.prior[j]).mean()
+                    if kl < min_kl:
+                        min_kl = kl
+            if 1/min_kl < self.tolerance:
+                # disable grad for mean and var of the class with high kl divergence
+                self.mu[i].requires_grad = False
+                self.var[i].requires_grad = False
 
-        kl_loss = kl_loss/cnt
-        kl_loss = 1/kl_loss # we want the loss to be small if the distributions are already far apart
-
-        return kl_loss
+        return min_kl
     
     def dice_loss(self, predicted_mask, mask):
         '''
@@ -1050,13 +1051,7 @@ class SemFM(nn.Module):
                 recon_loss, bce_loss, dice_loss, kl_loss = self.conditional_flow_matching_loss(x, mask)
                 loss = recon_loss + self.w_seg*0.5*(bce_loss + dice_loss)
 
-                # if we dont need to train the distributions then we dont need to backpropagate through them (saves ~2x memory)
-                if self.mu.requires_grad or self.var.requires_grad:
-                    #loss.backward(retain_graph=True)
-                    accelerate.backward(loss, retain_graph=True)
-                else:
-                    #loss.backward(retain_graph=False)
-                    accelerate.backward(loss, retain_graph=False)
+                accelerate.backward(loss, retain_graph=True)
 
                 optimizer.step()
                 epoch_loss += loss.item()*x.shape[0]
@@ -1082,13 +1077,14 @@ class SemFM(nn.Module):
                 self.segment_image(x, self.args.n_steps, mask, accelerate=accelerate)
                 self.draw_gaussians(accelerate=accelerate)
             
+            '''
             if epoch_loss_kl/len(dataloader.dataset) < self.tolerance:
                 # disable gradient in the means and variances if the distributions are already far apart
                 self.mu.requires_grad = False
                 self.var.requires_grad = False
                 #dataloader = final_dataloader
                 #dataloader.batch_size *= 2
-            
+            '''
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
                 #torch.save(self.state_dict(), os.path.join(models_dir, 'SemFM', f'SemFM_{self.dataset}_{self.args.size}.pt'))
