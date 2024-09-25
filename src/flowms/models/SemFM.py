@@ -1136,15 +1136,12 @@ class SemFM(nn.Module):
         
         x_t = (x_t + 1.) / 2.
         x_t = torch.clamp(x_t, 0., 1.)
-        mask = mask.float()
-        mask = mask/float(self.n_classes-1)
-        mask = torch.clamp(mask, 0., 1.)
+        mask = mask.long().cpu()
         mask = mask.unsqueeze(1)
 
         if self.dataset != 'brats':
             fig = plt.figure(figsize=(15, 10))
 
-            mask = mask.cpu()*float(self.n_classes-1)
             mask_color = torch.zeros(mask.shape[0], 3, mask.shape[2], mask.shape[3])
             for i in range(self.n_classes):
                 mask_color += (mask==i).float() * torch.tensor(self.colors[i])[:, None, None]
@@ -1226,26 +1223,22 @@ class SemFM(nn.Module):
         if test:
             return x_t
         # normalize x_t to [0, 1]
-        x_t = x_t/float(self.n_classes-1)
+        x_t = x_t.long()
 
         original_x = (original_x + 1.) / 2.
         original_x = torch.clamp(original_x, 0., 1.)
 
-        mask = mask.float()
-        mask = mask/float(self.n_classes-1)
-        mask = torch.clamp(mask, 0., 1.)
+        mask = mask.long().cpu()
         mask = mask.unsqueeze(1)
 
         if self.dataset != 'brats':
             # color the segmented image
             x_t_color = torch.zeros(x_t.shape[0], 3, x_t.shape[2], x_t.shape[3])
-            x_t = x_t*float(self.n_classes-1)
 
             for i in range(self.n_classes):
                 x_t_color += (x_t == i).float() * torch.tensor(self.colors[i])[:, None, None]
             x_t_color = x_t_color/255.
 
-            mask = mask.cpu()*float(self.n_classes-1)
             mask_color = torch.zeros(mask.shape[0], 3, mask.shape[2], mask.shape[3])
             for i in range(self.n_classes):
                 mask_color += (mask==i).float() * torch.tensor(self.colors[i])[:, None, None]

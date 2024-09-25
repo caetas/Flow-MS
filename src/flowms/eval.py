@@ -15,6 +15,6 @@ elif args.dataset == 'cityscapes':
     testloader = test_loader_cityscapes(batch_size=args.n_samples, size=args.size)
 
 model = FlowMS(args)
-model.load_model(args.checkpoint)
-model.eval_model(testloader)
+#model.load_model(args.checkpoint)
+#model.eval_model(testloader)
 model.sample(testloader)
